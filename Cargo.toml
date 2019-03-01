@@ -1,0 +1,10 @@
+[package]
+name = "riplog"
+version = "0.1.0"
+authors = ["Bryan Gilbert <gilbertw1@gmail.com>"]
+
+[dependencies]
+regex = "1"
+chrono = "0.4.6"
+nom = "4.0.0"
+byteorder = "1.2.6"
