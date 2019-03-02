@@ -51,7 +51,23 @@ impl<T> ColumnDefinition<T> {
 }
 
 pub fn validate_riplog_query<T>(query: &RipLogQuery, definition: &TableDefinition<T>) -> Result<()> {
-    validate_riplog_filter(&query.filter, &definition)
+    if query.filter.is_some() {
+        validate_riplog_filter(query.filter.as_ref().unwrap(), &definition)?
+    } 
+
+    if query.grouping.is_some() {
+        validate_riplog_grouping(query.grouping.as_ref().unwrap(), &definition)?
+    }
+
+    if query.show.is_some() {
+        validate_riplog_show(query.show.as_ref().unwrap(), &definition, query.grouping.is_some())?
+    }
+
+    if query.sort.is_some() {
+        validate_riplog_sort(query.sort.as_ref().unwrap(), &definition, query.show.as_ref())?
+    }
+
+    Ok(())
 }
 
 fn validate_riplog_filter<T>(filter: &QueryFilter, definition: &TableDefinition<T>) -> Result<()> {
@@ -86,18 +102,110 @@ fn validate_symbol<T>(symbol: &str, definition: &TableDefinition<T>) -> Result<(
     }
 }
 
+fn validate_riplog_grouping<T>(grouping: &QueryGrouping, definition: &TableDefinition<T>) -> Result<()> {
+    for s in &grouping.groupings {
+        validate_symbol(s, definition)?
+    }
+    Ok(())
+}
+
+fn validate_riplog_show<T>(show: &QueryShow, definition: &TableDefinition<T>, grouped: bool) -> Result<()> {
+    for element in &show.elements {
+        match element {
+            QueryShowElement::Symbol(symbol) => {
+                    validate_symbol(symbol, definition)?
+            },
+            QueryShowElement::Reducer(_, symbol) =>  {
+                if symbol != "*" {
+                    validate_symbol(symbol, definition)?
+                }
+            }
+            _ => ()
+        }
+    }
+    Ok(())
+}
+
+// TODO: Validate sorts are valid
+fn validate_riplog_sort<T>(sort: &QuerySort, definition: &TableDefinition<T>, show: Option<&QueryShow>) -> Result<()> {
+    for sorting in &sort.sortings {
+        ();
+    }
+    Ok(())
+}
+
 pub struct QueryEvaluator<T> {
     pub query: Rc<RipLogQuery>,
-    pub definition: Rc<TableDefinition<T>>
+    pub definition: Rc<TableDefinition<T>>,
+    pub group_map: HashMap<Vec<String>,u64>
 }
 
 impl<T> QueryEvaluator<T> {
 
-    pub fn apply_filters(&mut self, item: &mut T) -> bool {
-        let filter = &self.query.clone().filter;
-        self.evaluate_filter(filter, item)
+    fn print_row(&self, item: &mut T) {
+        if let Some(show) = &self.query.show {
+            for element in &show.elements {
+                match element {
+                    QueryShowElement::Symbol(symbol) => {
+                        let value = self.get_symbol_as_string(symbol, item);
+                        if value.is_some() {
+                            print!("{}", value.unwrap());
+                        } else {
+                            print!("null");
+                        }
+                        print!(" - ");
+                    },
+                    _ => ()
+                }
+            }
+        } else {
+            for coldef in self.definition.column_map.values() {
+                let value = self.get_column_value_as_string(coldef, item);
+                if value.is_some() {
+                    print!("{}", value.unwrap());
+                } else {
+                    print!("null");
+                }
+                print!(" - ");
+            }
+        }
+        println!("");
     }
 
+    pub fn evaluate(&mut self, item: &mut T) {
+        if self.apply_filters(item) {
+            //self.print_row(item);
+            self.group(item)
+        }
+    }
+
+    fn group(&mut self, item: &mut T) {
+        //let key = vec![self.get_symbol_as_string("ip", item).unwrap_or("null".to_owned()), self.get_symbol_as_string("status", item).unwrap_or("null".to_owned())];
+        let key = vec![self.get_symbol_as_string("status", item).unwrap_or("null".to_owned())];
+        let entry = self.group_map.entry(key).or_insert(0);
+        *entry += 1;
+    }
+
+    pub fn finalize(&self) {
+        for (keys, value) in &self.group_map {
+            for key in keys {
+                print!("{} - ", key);
+            }
+            println!("{} - ", value);
+        }
+    }
+
+    pub fn apply_filters(&mut self, item: &mut T) -> bool {
+        if self.query.filter.is_some() {
+            let query = &self.query.clone();
+            let filter = query.filter.as_ref().unwrap();
+            self.evaluate_filter(filter, item)
+        } else {
+            true
+        }
+    }
+
+    // ip = "1.1.1.1" | group method | show sum(bytes)
     fn evaluate_filter(&mut self, filter: &QueryFilter, item: &mut T) -> bool {
         match filter {
             QueryFilter::BinaryOpFilter(operand1, operand2, op) =>
@@ -164,6 +272,20 @@ impl<T> QueryEvaluator<T> {
         }
     }
 
+    fn get_column_value_as_string<'b>(&self, cdef: &ColumnDefinition<T>, item: &'b mut T) -> Option<String> {
+        match cdef {
+            ColumnDefinition::Integer { extractor, .. } => extractor(item).map(|i| i.to_string()),
+            ColumnDefinition::Double { extractor, .. } => extractor(item).map(|i| i.to_string()),
+            ColumnDefinition::Text { extractor, .. } => extractor(item).map(|i| i.to_string()),
+            ColumnDefinition::Date { extractor, .. } => extractor(item).map(|i| i.to_string()),
+            ColumnDefinition::Boolean { extractor, .. } => extractor(item).map(|i| i.to_string()),
+        }
+    }
+
+    fn get_symbol_as_string<'b>(&self, symbol: &str, item: &'b mut T) -> Option<String> {
+        self.get_column_value_as_string(self.get_symbol_definition(symbol), item)
+    }
+
     fn get_symbol_definition(&self, symbol: &str) -> &ColumnDefinition<T> {
         self.definition.column_map.get(symbol).unwrap()
     }
@@ -193,3 +315,16 @@ type Result<T> = result::Result<T, QueryValidationError>;
 
 #[derive(Debug, Clone)]
 pub struct QueryValidationError { msg: String }
+
+
+/*
+ubuntu@api-dev--001 80# cat /var/log/nginx/access.log | grep 1.1.1.1 | awk '{print $9}' | sort | uniq -c | sort -rn                                                                                                                          ~  15:02:35
+6672 200
+14 404
+3 400
+1 182
+
+ip = "1.1.1.1" && path ~ "userid1234" | group status | show status, avg(bytes) | sort avg(bytes) | limit 100
+
+
+*/

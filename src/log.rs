@@ -252,24 +252,28 @@ impl BinaryNginxLogRecord {
     }
 
     pub fn parsed_status(&mut self) -> Option<u64> {
-        if self.parsed_record.status.is_some() {
-            self.parsed_record.status.unwrap()
-        } else {
-            self.parsed_record.status =
-                if self.status.len() < 1 { Some(None) }
-                else { Some(self.status.as_slice().read_u64::<BigEndian>().ok()) };
-            self.parsed_record.status.unwrap()
+        unsafe {
+            if self.parsed_record.status.is_some() {
+                self.parsed_record.status.unwrap()
+            } else {
+                self.parsed_record.status =
+                    if self.status.len() < 1 { Some(None) }
+                else { Some(String::from_utf8_unchecked(self.status.clone()).parse::<u64>().ok()) };
+                self.parsed_record.status.unwrap()
+            }
         }
     }
 
     pub fn parsed_bytes(&mut self) -> Option<u64> {
-        if self.parsed_record.bytes.is_some() {
-            self.parsed_record.bytes.unwrap()
-        } else {
-            self.parsed_record.bytes =
-                if self.bytes.len() < 1 { Some(None) }
-            else { Some(self.bytes.as_slice().read_u64::<BigEndian>().ok()) };
-            self.parsed_record.bytes.unwrap()
+        unsafe {
+            if self.parsed_record.bytes.is_some() {
+                self.parsed_record.bytes.unwrap()
+            } else {
+                self.parsed_record.bytes =
+                    if self.bytes.len() < 1 { Some(None) }
+                else { Some(String::from_utf8_unchecked(self.bytes.clone()).parse::<u64>().ok()) };
+                self.parsed_record.status.unwrap()
+            }
         }
     }
 

@@ -31,12 +31,15 @@ fn main() {
 fn run_query(query: String, dir: String) {
     let definition = Rc::new(log::create_nginx_log_record_table_definition());
     let query = Rc::new(parser::parse_query(query));
+    println!("Query: {:?}", query);
     let result = query::validate_riplog_query(&query, &definition);
-    let mut evaluator = QueryEvaluator { query: query.clone(), definition: definition.clone() };
+    result.unwrap();
+    let mut evaluator = QueryEvaluator { query: query.clone(), definition: definition.clone(), group_map: HashMap::new() };
 
     let dir = Path::new(&dir);
     let start = Instant::now();
     let count = evaluate_query_log_dir(dir, &mut evaluator);
+    evaluator.finalize();
     let end = Instant::now();
     println!("Count: {:?}", count);
 }
@@ -62,9 +65,10 @@ fn evaluate_query_log_dir(dir: &Path, evaluator: &mut QueryEvaluator<BinaryNginx
                     break;
                 }
                 log::read_log_record_binary(&buf, size, &mut record);
-                if evaluator.apply_filters(&mut record) {
-                    count += 1;
-                }
+                evaluator.evaluate(&mut record);
+                // if evaluator.apply_filters(&mut record) {
+                //     count += 1;
+                // }
                 // if record.ip == b"192.210.160.130" {
                 //     count += 1;
                 // }
