@@ -120,11 +120,11 @@ named!(parse_show_reducer<CompleteStr, QueryShowElement>,
        map!(tuple!(parse_reducer, delimited!(char!('('), take_until_s!(")"), char!(')'))),
             |s| QueryShowElement::Reducer(s.0, s.1.to_string().to_lowercase())));
 
-named!(parse_reducer<CompleteStr, Reducer>,
-       alt!(map!(tag_s!("count"), |_| Reducer::Count) |
-            map!(tag_s!("sum"), |_| Reducer::Sum) |
-            map!(tag_s!("max"), |_| Reducer::Max) |
-            map!(tag_s!("avg"), |_| Reducer::Avg)));
+named!(parse_reducer<CompleteStr, QueryReducer>,
+       alt!(map!(tag_s!("count"), |_| QueryReducer::Count) |
+            map!(tag_s!("sum"), |_| QueryReducer::Sum) |
+            map!(tag_s!("max"), |_| QueryReducer::Max) |
+            map!(tag_s!("avg"), |_| QueryReducer::Avg)));
 
 //////////
 // SORT //
@@ -210,11 +210,20 @@ pub struct QueryShow {
 pub enum QueryShowElement {
     All,
     Symbol(String),
-    Reducer(Reducer, String)
+    Reducer(QueryReducer, String)
+}
+
+impl QueryShowElement {
+    pub fn is_reducer(&self) -> bool {
+        match self {
+            QueryShowElement::Reducer(_, _) => true,
+            _ => false
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
-pub enum Reducer {
+pub enum QueryReducer {
     Count,
     Sum,
     Max,

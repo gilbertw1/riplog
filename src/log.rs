@@ -190,6 +190,7 @@ pub struct BinaryNginxLogRecord {
     parsed_record: ParsedNginxLogRecord,
 }
 
+// TODO: Parse query string separate from path (put in parameters in map -- lazy?)
 impl BinaryNginxLogRecord {
     pub fn empty() -> BinaryNginxLogRecord {
         BinaryNginxLogRecord {
@@ -272,7 +273,7 @@ impl BinaryNginxLogRecord {
                 self.parsed_record.bytes =
                     if self.bytes.len() < 1 { Some(None) }
                 else { Some(String::from_utf8_unchecked(self.bytes.clone()).parse::<u64>().ok()) };
-                self.parsed_record.status.unwrap()
+                self.parsed_record.bytes.unwrap()
             }
         }
     }

@@ -34,7 +34,8 @@ fn run_query(query: String, dir: String) {
     println!("Query: {:?}", query);
     let result = query::validate_riplog_query(&query, &definition);
     result.unwrap();
-    let mut evaluator = QueryEvaluator { query: query.clone(), definition: definition.clone(), group_map: HashMap::new() };
+    //let mut evaluator = QueryEvaluator { query: query.clone(), definition: definition.clone(), group_map: HashMap::new() };
+    let mut evaluator = QueryEvaluator::<BinaryNginxLogRecord>::new(query, definition);
 
     let dir = Path::new(&dir);
     let start = Instant::now();
