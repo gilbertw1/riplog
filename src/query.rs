@@ -8,6 +8,7 @@ const EMPTY_BYTES: &[u8] = &[];
 
 pub struct TableDefinition<T> {
     pub column_map: HashMap<String, ColumnDefinition<T>>,
+    pub ordered_columns: Vec<String>,
 }
 
 pub enum ColumnDefinition<T> {
@@ -135,23 +136,33 @@ fn validate_riplog_sort<T>(sort: &QuerySort, definition: &TableDefinition<T>, sh
 }
 
 pub struct QueryEvaluator<T> {
-    pub query: Rc<RipLogQuery>,
-    pub definition: Rc<TableDefinition<T>>,
+    query: Rc<RipLogQuery>,
+    definition: Rc<TableDefinition<T>>,
     group_map: HashMap<Vec<String>,Reducer<T>>,
     global_reducer: Reducer<T>,
     aggregate: bool,
+    record_formatter: RecordFormatter<T>,
 }
 
 impl<T> QueryEvaluator<T> {
 
-    pub fn new<N>(query: Rc<RipLogQuery>, definition: Rc<TableDefinition<N>>) -> QueryEvaluator<N> {
-        QueryEvaluator {
-            query: query.clone(),
-            definition: definition.clone(),
-            group_map: HashMap::new(),
-            global_reducer: create_reducer(&query),
-            aggregate: is_aggregate_query(&query)
+    pub fn new<N>(query: RipLogQuery, definition: TableDefinition<N>) -> QueryEvaluator<N> {
+        let mut rquery = query;
+        rquery.compute_show(&definition);
+        let query_rc = Rc::new(rquery);
+        let mut evaluator =
+            QueryEvaluator {
+                query: query_rc.clone(),
+                definition: Rc::new(definition),
+                group_map: HashMap::new(),
+                global_reducer: create_reducer(&query_rc),
+                aggregate: is_aggregate_query(&query_rc),
+                record_formatter: RecordFormatter::new(&query_rc),
+            };
+        if !evaluator.aggregate {
+            evaluator.record_formatter.format_header_row();
         }
+        evaluator
     }
 
     pub fn evaluate(&mut self, item: &mut T) {
@@ -160,68 +171,37 @@ impl<T> QueryEvaluator<T> {
             if self.aggregate {
                 self.aggregate(&mut record);
             } else {
-                self.print_row(&mut record);
+                self.record_formatter.format_record(&mut record);
             }
         }
     }
 
     fn aggregate(&mut self, record: &mut Record<T>) {
-        //let key = vec![self.get_symbol_as_string("ip", record).unwrap_or("null".to_owned()), self.get_symbol_as_string("status", record).unwrap_or("null".to_owned())];
-        // let key = vec![record.get_symbol_as_string("status").unwrap_or("null".to_owned())];
-        // let entry = self.group_map.entry(key).or_insert(0);
-        // *entry += 1;
         if self.query.grouping.is_some() {
             // todo
+            let key = create_group_key(&self.query.grouping.as_ref().unwrap().groupings, record);
+            let entry = self.group_map.entry(key).or_insert(create_reducer(&self.query));
+            entry.apply_record(record);
         } else {
             self.global_reducer.apply_record(record);
         }
     }
 
-    pub fn finalize(&self) {
-        // for (keys, value) in &self.group_map {
-        //     for key in keys {
-        //         print!("{} - ", key);
-        //     }
-        //     println!("{} - ", value);
-        // }
-
-
-        for field_reducer in &self.global_reducer.field_reducers {
-            print!("{} - {}, ", field_reducer.get_symbol(), field_reducer.result());
-        }
-    }
-
-    fn print_row(&self, record: &mut Record<T>) {
-        if let Some(show) = &self.query.show {
-            for element in &show.elements {
-                match element {
-                    QueryShowElement::Symbol(symbol) => {
-                        let value = record.get_symbol_as_string(symbol);
-                        if value.is_some() {
-                            print!("{}", value.unwrap());
-                        } else {
-                            print!("null");
-                        }
-                        print!(" - ");
-                    },
-                    _ => ()
+    pub fn finalize(&mut self) {
+        if self.aggregate {
+            self.record_formatter.format_header_row();
+            if self.query.grouping.is_some() {
+                for (keys, reducer) in &self.group_map {
+                    self.record_formatter.format_grouped_record(keys, reducer);
                 }
-            }
-        } else {
-            for coldef in self.definition.column_map.values() {
-                let value = record.get_column_value_as_string(coldef);
-                if value.is_some() {
-                    print!("{}", value.unwrap());
-                } else {
-                    print!("null");
-                }
-                print!(" - ");
+            } else {
+                self.record_formatter.format_reduced_record(&self.global_reducer);
             }
         }
-        println!("");
+        self.record_formatter.format_closing_row();
     }
 
-    pub fn apply_filters(&mut self, record: &mut Record<T>) -> bool {
+    fn apply_filters(&mut self, record: &mut Record<T>) -> bool {
         if self.query.filter.is_some() {
             let query = &self.query.clone();
             let filter = query.filter.as_ref().unwrap();
@@ -313,6 +293,14 @@ fn create_reducer<T>(query: &RipLogQuery) -> Reducer<T> {
     } else {
         Reducer { field_reducers: Vec::with_capacity(0) }
     }
+}
+
+fn create_group_key<T>(groupings: &Vec<String>, record: &mut Record<T>) -> Vec<String> {
+    let mut key = Vec::with_capacity(groupings.len());
+    for grouping in groupings {
+        key.push(record.get_symbol_as_string(grouping).unwrap_or("null".to_owned()));
+    }
+    key
 }
 
 type Result<T> = result::Result<T, QueryValidationError>;
@@ -420,6 +408,7 @@ trait FieldReducer<T> {
     fn get_symbol(&self) -> &str;
 }
             
+#[derive(Debug, Clone)]
 struct CountReducer {
     symbol: String,
     count: u64,
@@ -446,6 +435,7 @@ impl<T> FieldReducer<T> for CountReducer {
     }
 }
             
+#[derive(Debug, Clone)]
 struct SumReducer {
     symbol: String,
     sum: u64
@@ -468,6 +458,7 @@ impl<T> FieldReducer<T> for SumReducer {
     }
 }
 
+#[derive(Debug, Clone)]
 struct AvgReducer {
     symbol: String,
     count: u64,
@@ -496,6 +487,7 @@ impl<T> FieldReducer<T> for AvgReducer {
     }
 }
 
+#[derive(Debug, Clone)]
 struct MaxReducer {
     symbol: String,
     max: u64
@@ -515,6 +507,243 @@ impl<T> FieldReducer<T> for MaxReducer {
 
     fn get_symbol(&self) -> &str {
         &self.symbol
+    }
+}
+
+struct ResultsPrinter<T> {
+    definition: Rc<TableDefinition<T>>,
+    query: RipLogQuery,
+}
+
+impl<T> ResultsPrinter<T> {
+
+    fn print_header_row(&self) {
+        if self.query.show.is_some() {
+            
+        } else if self.query.grouping.is_some() {
+
+        } else {
+            
+        }
+    }
+}
+
+struct RecordFormatter<T> {
+    fields: Vec<Box<OutputField<T>>>
+}
+
+impl<T> RecordFormatter<T> {
+
+    pub fn new(query: &RipLogQuery) -> RecordFormatter<T> {
+        let mut fields: Vec<Box<OutputField<T>>> = Vec::new();
+        for element in &query.computed_show.as_ref().unwrap().elements {
+            match element {
+                QueryShowElement::Symbol(symbol) => {
+                    let group_idx = get_group_idx(&symbol, query);
+                    if group_idx.is_some() {
+                        fields.push(Box::new(GroupOutputField { symbol: symbol.clone(), idx: group_idx.unwrap(), size: 10 }));
+                    } else {
+                        fields.push(Box::new(SymbolOutputField { symbol: symbol.clone(), size: 10 }));
+                    }
+                },
+                QueryShowElement::Reducer(reducer, symbol) => {
+                    let reduce_idx = get_reduce_idx(&symbol, &reducer, query);
+                    if reduce_idx.is_some() {
+                        fields.push(Box::new(ReducedOutputField { reducer: reducer.to_string().to_owned(), symbol: symbol.clone(), idx: reduce_idx.unwrap(), size: 10 }));
+                    }
+                }
+                _ => ()
+            }
+        }
+        RecordFormatter { fields }
+    }
+    
+    pub fn format_record(&mut self, record: &mut Record<T>) {
+        print!("|");
+        for field in &mut self.fields {
+            print!("{}|", field.format_field(Some(record), None, None));
+        }
+        println!("");
+    }
+
+    pub fn format_grouped_record(&mut self, key: &Vec<String>, reducer: &Reducer<T>) {
+        print!("|");
+        for field in &mut self.fields {
+            print!("{}|", field.format_field(None, Some(key), Some(reducer)));
+        }
+        println!("");
+    }
+
+    pub fn format_reduced_record(&mut self, reducer: &Reducer<T>) {
+        print!("|");
+        for field in &mut self.fields {
+            print!("{}|", field.format_field(None, None, Some(reducer)));
+        }
+        println!("");
+    }
+
+    pub fn format_header_row(&mut self) {
+        let mut header_row = "|".to_owned();
+        for field in &mut self.fields {
+            header_row += &format!("{}|", field.header());
+        }
+        let pad = (0..header_row.len()-2).map(|_| "-").collect::<String>();
+        println!("+{}+", pad);
+        println!("{}", header_row);
+        println!("|{}|", pad);
+    }
+
+    pub fn format_closing_row(&mut self) {
+        let mut len = 1;
+        for field in &mut self.fields {
+            len += field.size()+1
+        }
+        let pad = (0..len-2).map(|_| "-").collect::<String>();
+        println!("+{}+", pad);
+    }
+}
+
+// TODO: better way to line up indexes
+fn get_group_idx(symbol: &str, query: &RipLogQuery) -> Option<usize> {
+    if query.grouping.is_some() {
+        let mut idx = 0;
+        let mut found_idx: Option<usize> = None;
+        for group in &query.grouping.as_ref().unwrap().groupings {
+            if group == symbol {
+                found_idx = Some(idx);
+                break;
+            }
+            idx += 1;
+        }
+        found_idx
+    } else {
+        None
+    }
+}
+
+// TODO: better way to line up indexes
+fn get_reduce_idx(symbol: &str, reducer: &QueryReducer, query: &RipLogQuery) -> Option<usize> {
+    if query.show.is_some() {
+        let mut idx = 0;
+        let mut found_idx: Option<usize> = None;
+        for element in query.show.as_ref().unwrap().elements.iter().filter(|e| e.is_reducer()) {
+            match element {
+                QueryShowElement::Reducer(curr_reducer, curr_symbol) => {
+                    if curr_reducer.to_string() == reducer.to_string() && (symbol == "*" || curr_symbol == symbol) {
+                        found_idx = Some(idx);
+                        break;
+                    }
+                },
+                _ => ()
+            }
+            idx += 1;
+        }
+        found_idx
+    } else {
+        None
+    }
+}
+
+trait OutputField<T> {
+    fn header(&mut self) -> String;
+    fn format_field(&mut self, record: Option<&mut Record<T>>, group_key: Option<&Vec<String>>, reducer: Option<&Reducer<T>>) -> String;
+    fn size(&self) -> usize;
+}
+
+struct SymbolOutputField {
+    symbol: String,
+    size: usize,
+}
+
+impl<T> OutputField<T> for SymbolOutputField {
+    fn header(&mut self) -> String {
+        if self.size < self.symbol.len()+2 {
+            self.size = self.symbol.len()+2;
+        }
+        format!("{:width$}", self.symbol, width = self.size)
+    }
+
+    fn format_field(&mut self, record: Option<&mut Record<T>>, group_key: Option<&Vec<String>>, reducer: Option<&Reducer<T>>) -> String {
+        let output =
+            if record.is_some() {
+                record.unwrap().get_symbol_as_string(&self.symbol).unwrap_or("null".to_owned())
+            } else {
+                "null".to_owned()
+            };
+        if self.size < output.len()+2 {
+            self.size = output.len()+2;
+        }
+        format!("{:width$}", output, width = self.size)
+    }
+
+    fn size(&self) -> usize {
+        self.size
+    }
+}
+
+struct GroupOutputField {
+    symbol: String,
+    idx: usize,
+    size: usize,
+}
+
+impl<T> OutputField<T> for GroupOutputField {
+    fn header(&mut self) -> String {
+        if self.size < self.symbol.len()+2 {
+            self.size = self.symbol.len()+2;
+        }
+        format!("{:width$}", self.symbol, width = self.size)
+    }
+
+    fn format_field(&mut self, record: Option<&mut Record<T>>, group_key: Option<&Vec<String>>, reducer: Option<&Reducer<T>>) -> String {
+        let output =
+            if group_key.is_some() && group_key.unwrap().len() >= (self.idx+1) {
+                group_key.unwrap()[self.idx].clone()
+            } else {
+                "null".to_owned()
+            };
+        if self.size < output.len()+2 {
+            self.size = output.len()+2;
+        }
+        format!("{:width$}", output, width = self.size)
+    }
+
+    fn size(&self) -> usize {
+        self.size
+    }
+}
+
+struct ReducedOutputField {
+    reducer: String,
+    symbol: String,
+    idx: usize,
+    size: usize,
+}
+
+impl<T> OutputField<T> for ReducedOutputField {
+    fn header(&mut self) -> String {
+        let name = format!("{}({})", self.reducer, self.symbol);
+        if self.size < name.len()+2 {
+            self.size = name.len()+2;
+        }
+        format!("{:width$}", name, width = self.size)
+    }
+
+    fn format_field(&mut self, record: Option<&mut Record<T>>, group_key: Option<&Vec<String>>, reducer: Option<&Reducer<T>>) -> String {
+        let output =
+            if reducer.is_some() && reducer.unwrap().field_reducers.len() >= (self.idx+1) {
+                reducer.unwrap().field_reducers[self.idx].result().to_string()
+            } else {
+                "null".to_owned()
+            };
+        if self.size < output.len()+2 {
+            self.size = output.len()+2;
+        }
+        format!("{:width$}", output, width = self.size)
+    }
+
+    fn size(&self) -> usize {
+        self.size
     }
 }
 

@@ -1,3 +1,5 @@
+use query::TableDefinition;
+
 use nom;
 use nom::types::CompleteStr;
 use chrono::prelude::*;
@@ -156,7 +158,7 @@ named!(parse_riplog_query<CompleteStr, RipLogQuery>,
                    opt!(ws!(parse_sort)),
                    opt!(tag_no_case_s!("|")),
                    opt!(ws!(parse_limit))),
-            |f| RipLogQuery { filter: f.0, grouping: f.2, show: f.4, sort: f.6, limit: f.8 }));
+            |f| RipLogQuery { filter: f.0, grouping: f.2, show: f.4, sort: f.6, limit: f.8, computed_show: None }));
 
 pub fn parse_query(query: String) -> RipLogQuery {
     parse_riplog_query(CompleteStr(&query)).unwrap().1
@@ -170,6 +172,46 @@ pub struct RipLogQuery {
     pub show: Option<QueryShow>,
     pub sort: Option<QuerySort>,
     pub limit: Option<QueryLimit>,
+    pub computed_show: Option<QueryShow>
+}
+
+impl RipLogQuery {
+    pub fn compute_show<T>(&mut self, definition: &TableDefinition<T>) {
+        let mut elements = Vec::new();
+        if self.show.is_some() {
+            if self.grouping.is_some() {
+                let filtered_shows: Vec<QueryShowElement> = self.show.as_ref().unwrap().elements.iter().filter(|e| e.is_reducer()).map(|e| e.clone()).collect();
+                for group in &self.grouping.as_ref().unwrap().groupings {
+                    elements.push(QueryShowElement::Symbol(group.to_owned()));
+                }
+                if filtered_shows.is_empty() {
+                    elements.push(QueryShowElement::Reducer(QueryReducer::Count, "*".to_owned()));
+                }
+                for show in filtered_shows {
+                    elements.push(show.clone());
+                }
+            } else if self.show.as_ref().unwrap().elements.iter().any(|e| e.is_reducer()) {
+                let filtered_shows: Vec<QueryShowElement> = self.show.as_ref().unwrap().elements.iter().filter(|e| e.is_reducer()).map(|e| e.clone()).collect();
+                for show in filtered_shows {
+                    elements.push(show);
+                }
+            } else {
+                let query_elements = self.show.as_ref().unwrap().elements.clone();
+                if query_elements.iter().any(|e| e.is_star()) {
+                    for col in &definition.ordered_columns {
+                        elements.push(QueryShowElement::Symbol(col.to_owned()));
+                    }
+                } else {
+                    elements = query_elements;
+                }
+            }
+        } else {
+            for col in &definition.ordered_columns {
+                elements.push(QueryShowElement::Symbol(col.to_owned()));
+            }
+        }
+        self.computed_show = Some(QueryShow { elements })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -220,6 +262,20 @@ impl QueryShowElement {
             _ => false
         }
     }
+
+    pub fn symbol(&self) -> Option<&str> {
+        match self {
+            QueryShowElement::Symbol(sym) => Some(sym),
+            _ => None
+        }
+    }
+
+    pub fn is_star(&self) -> bool {
+        match self {
+            QueryShowElement::All => true,
+            _ => false
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -228,6 +284,17 @@ pub enum QueryReducer {
     Sum,
     Max,
     Avg,
+}
+
+impl QueryReducer {
+    pub fn to_string(&self) -> &str {
+        match self {
+            QueryReducer::Count => "count",
+            QueryReducer::Sum => "sum",
+            QueryReducer::Max => "max",
+            QueryReducer::Avg => "avg",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -361,12 +361,15 @@ pub fn create_nginx_log_record_table_definition<'a>() -> TableDefinition<BinaryN
         ];
 
     let mut column_map = HashMap::new();
+    let mut ordering = Vec::new();
 
     for c in columns {
+        ordering.push(c.name().to_owned());
         column_map.insert(c.name().to_string(), c);
     }
 
     TableDefinition {
         column_map: column_map,
+        ordered_columns: ordering,
     }
 }
