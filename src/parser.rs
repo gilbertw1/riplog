@@ -35,7 +35,7 @@ named!(parse_regex_operand<CompleteStr, QueryValue>,
             |t| QueryValue::Regex(Regex::new(&t.1.to_string()).unwrap())));
        
 named!(parse_symbol_operand<CompleteStr, QueryValue>,
-       map!(nom::alpha,
+       map!(take_while!(is_symbol),
             |s| QueryValue::Symbol(s.to_string().to_lowercase())));
 
 named!(parse_int_operand<CompleteStr, QueryValue>,
@@ -96,7 +96,7 @@ named!(parse_filter<CompleteStr, QueryFilter>,
 //////////////
 
 named!(parse_grouping<CompleteStr, QueryGrouping>,
-       map!(tuple!(tag_no_case_s!("group"), separated_list!(tag!(","), ws!(map!(nom::alpha, |s| s.to_string().to_lowercase())))),
+       map!(tuple!(tag_no_case_s!("group"), separated_list!(tag!(","), ws!(map!(take_while!(is_symbol), |s| s.to_string().to_lowercase())))),
             |groupings| QueryGrouping { groupings: groupings.1 }));
 
 //////////
@@ -115,7 +115,7 @@ named!(parse_show_all<CompleteStr, QueryShowElement>,
             |s| QueryShowElement::All));
 
 named!(parse_show_symbol<CompleteStr, QueryShowElement>,
-       map!(nom::alpha,
+       map!(take_while!(is_symbol),
             |s| QueryShowElement::Symbol(s.to_string().to_lowercase())));
 
 named!(parse_show_reducer<CompleteStr, QueryShowElement>,
@@ -135,7 +135,7 @@ named!(parse_reducer<CompleteStr, QueryReducer>,
 named!(parse_sort<CompleteStr, QuerySort>,
        map!(tuple!(tag_no_case_s!("sort"),
                    separated_list!(tag!(","),
-                                   ws!(map!(tuple!(nom::alpha,
+                                   ws!(map!(tuple!(take_while!(is_symbol),
                                                    opt!(alt!(tag_no_case_s!("asc") |
                                                              tag_no_case_s!("desc")))), |s| QuerySortElement::new(s.0.to_string().to_lowercase(), s.1.map(|st| st.to_string())))))),
             |sortings| QuerySort { sortings: sortings.1 }));
@@ -163,6 +163,11 @@ named!(parse_riplog_query<CompleteStr, RipLogQuery>,
                    opt!(tag_no_case_s!("|")),
                    opt!(ws!(parse_limit))),
             |f| RipLogQuery { filter: f.0, grouping: f.2, show: f.4, sort: f.6, limit: f.8, computed_show: None }));
+
+
+fn is_symbol(chr: char) -> bool {
+    chr.is_alphanumeric() || chr == '_'
+}
 
 pub fn parse_query(query: String) -> RipLogQuery {
     parse_riplog_query(CompleteStr(&query)).unwrap().1
