@@ -9,9 +9,6 @@ use std::path::Path;
 use std::env;
 use std::io::{self, BufRead, BufReader};
 use std::time::Instant;
-use std::str;
-use std::collections::HashMap;
-use std::rc::Rc;
 
 mod query;
 mod log;
@@ -28,7 +25,7 @@ fn main() {
     println!("Duration: {:?}", end - start);
 }
 
-fn run_query(query: String, dir: String) {
+fn run_query(query: String, path: String) {
     let definition = log::create_nginx_log_record_table_definition();
     let query = parser::parse_query(query);
     //println!("Query: {:?}", query);
@@ -36,9 +33,18 @@ fn run_query(query: String, dir: String) {
     result.unwrap();
     let mut evaluator = QueryEvaluator::<BinaryNginxLogRecord>::new(query, definition);
 
-    let dir = Path::new(&dir);
-    evaluate_query_log_dir(dir, &mut evaluator);
+    let path = Path::new(&path);
+    evaluate_query_log_file_or_dir(path, &mut evaluator);
     evaluator.finalize();
+}
+
+fn evaluate_query_log_file_or_dir(path: &Path, evaluator: &mut QueryEvaluator<BinaryNginxLogRecord>) -> io::Result<()> {
+    if path.is_dir() {
+        evaluate_query_log_dir(&path, evaluator)?;
+    } else {
+        evaluate_query_log_file(&path, evaluator)?;
+    }
+    Ok(())
 }
 
 fn evaluate_query_log_dir(dir: &Path, evaluator: &mut QueryEvaluator<BinaryNginxLogRecord>) -> io::Result<()> {
@@ -48,21 +54,28 @@ fn evaluate_query_log_dir(dir: &Path, evaluator: &mut QueryEvaluator<BinaryNginx
 
         if path.is_dir() {
             evaluate_query_log_dir(&path, evaluator)?;
-        } else if path.file_name().unwrap().to_str().unwrap().contains("access.log") {
-            let file = File::open(path)?;
-            let mut reader = BufReader::new(file);
-            let mut buf = vec![];
-            let mut record = BinaryNginxLogRecord::empty();
-           
-            loop {
-                buf.clear();
-                let size = reader.read_until(b'\n', &mut buf).unwrap();
-                if size <= 0 {
-                    break;
-                }
-                log::read_log_record_binary(&buf, size, &mut record);
-                evaluator.evaluate(&mut record);
+        } else {
+            evaluate_query_log_file(&path, evaluator)?;
+        }
+    }
+    Ok(())
+}
+
+fn evaluate_query_log_file(file: &Path, evaluator: &mut QueryEvaluator<BinaryNginxLogRecord>) -> io::Result<()> {
+    if file.file_name().unwrap().to_str().unwrap().contains("access.log") {
+        let file = File::open(file)?;
+        let mut reader = BufReader::new(file);
+        let mut buf = vec![];
+        let mut record = BinaryNginxLogRecord::empty();
+        
+        loop {
+            buf.clear();
+            let size = reader.read_until(b'\n', &mut buf).unwrap();
+            if size <= 0 {
+                break;
             }
+            log::read_log_record_binary(&buf, size, &mut record);
+            evaluator.evaluate(&mut record);
         }
     }
     Ok(())

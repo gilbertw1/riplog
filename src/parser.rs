@@ -133,7 +133,11 @@ named!(parse_reducer<CompleteStr, QueryReducer>,
 //////////
 
 named!(parse_sort<CompleteStr, QuerySort>,
-       map!(tuple!(tag_no_case_s!("sort"), separated_list!(tag!(","), ws!(map!(nom::alpha, |s| s.to_string().to_lowercase())))),
+       map!(tuple!(tag_no_case_s!("sort"),
+                   separated_list!(tag!(","),
+                                   ws!(map!(tuple!(nom::alpha,
+                                                   opt!(alt!(tag_no_case_s!("asc") |
+                                                             tag_no_case_s!("desc")))), |s| QuerySortElement::new(s.0.to_string().to_lowercase(), s.1.map(|st| st.to_string())))))),
             |sortings| QuerySort { sortings: sortings.1 }));
 
 ///////////
@@ -206,8 +210,15 @@ impl RipLogQuery {
                 }
             }
         } else {
-            for col in &definition.ordered_columns {
-                elements.push(QueryShowElement::Symbol(col.to_owned()));
+            if self.grouping.is_some() {
+                for group in &self.grouping.as_ref().unwrap().groupings {
+                    elements.push(QueryShowElement::Symbol(group.to_owned()));
+                }
+                elements.push(QueryShowElement::Reducer(QueryReducer::Count, "*".to_owned()));
+            } else {
+                for col in &definition.ordered_columns {
+                    elements.push(QueryShowElement::Symbol(col.to_owned()));
+                }
             }
         }
         self.computed_show = Some(QueryShow { elements })
@@ -299,7 +310,34 @@ impl QueryReducer {
 
 #[derive(Debug, Clone)]
 pub struct QuerySort {
-    pub sortings: Vec<String>
+    pub sortings: Vec<QuerySortElement>
+}
+
+#[derive(Debug, Clone)]
+pub struct QuerySortElement {
+    pub field: String,
+    pub order: QuerySortOrdering,
+}
+
+impl QuerySortElement {
+    pub fn new(field: String, order: Option<String>) -> QuerySortElement {
+        QuerySortElement { field: field, order: order.map(|o| QuerySortOrdering::from_string(o)).unwrap_or(QuerySortOrdering::ASC) }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum QuerySortOrdering {
+    ASC,
+    DESC,
+}
+
+impl QuerySortOrdering {
+    fn from_string(order: String) -> QuerySortOrdering {
+        match order.to_lowercase().as_ref() {
+            "desc" => QuerySortOrdering::DESC,
+            _ => QuerySortOrdering::ASC,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -270,13 +270,13 @@ impl<T> QueryEvaluator<T> {
 
 fn is_aggregate_query(query: &RipLogQuery) -> bool {
     query.grouping.is_some() ||
-        (query.show.is_some() && query.show.as_ref().unwrap().elements.iter().any(|e| e.is_reducer()))
+        (query.computed_show.is_some() && query.computed_show.as_ref().unwrap().elements.iter().any(|e| e.is_reducer()))
 }
 
 fn create_reducer<T>(query: &RipLogQuery) -> Reducer<T> {
-    if query.show.is_some() {
+    if query.computed_show.is_some() {
         let mut field_reducers: Vec<Box<FieldReducer<T>>> = Vec::new();
-        for element in &query.show.as_ref().unwrap().elements {
+        for element in &query.computed_show.as_ref().unwrap().elements {
             match element {
                 QueryShowElement::Reducer(QueryReducer::Count, symbol) =>
                     field_reducers.push(Box::new(CountReducer { symbol: symbol.to_owned(), count: 0 })),
@@ -518,7 +518,7 @@ struct ResultsPrinter<T> {
 impl<T> ResultsPrinter<T> {
 
     fn print_header_row(&self) {
-        if self.query.show.is_some() {
+        if self.query.computed_show.is_some() {
             
         } else if self.query.grouping.is_some() {
 
@@ -623,10 +623,10 @@ fn get_group_idx(symbol: &str, query: &RipLogQuery) -> Option<usize> {
 
 // TODO: better way to line up indexes
 fn get_reduce_idx(symbol: &str, reducer: &QueryReducer, query: &RipLogQuery) -> Option<usize> {
-    if query.show.is_some() {
+    if query.computed_show.is_some() {
         let mut idx = 0;
         let mut found_idx: Option<usize> = None;
-        for element in query.show.as_ref().unwrap().elements.iter().filter(|e| e.is_reducer()) {
+        for element in query.computed_show.as_ref().unwrap().elements.iter().filter(|e| e.is_reducer()) {
             match element {
                 QueryShowElement::Reducer(curr_reducer, curr_symbol) => {
                     if curr_reducer.to_string() == reducer.to_string() && (symbol == "*" || curr_symbol == symbol) {
@@ -748,7 +748,7 @@ impl<T> OutputField<T> for ReducedOutputField {
 }
 
 /*
-ubuntu@api-dev--001 80# cat /var/log/nginx/access.log | grep 1.1.1.1 | awk '{print $9}' | sort | uniq -c | sort -rn                                                                                                                          ~  15:02:35
+ubuntu@api-dev--001 80# cat /var/log/nginx/access.log | grep 1.1.1.1 | awk '{print $9}' | sort | uniq -c | sort -rn
 6672 200
 14 404
 3 400
