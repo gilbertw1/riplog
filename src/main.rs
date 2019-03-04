@@ -19,7 +19,7 @@ mod parser;
 use log::BinaryNginxLogRecord;
 use query::QueryEvaluator;
 
-fn main() {
+fn main() { 
     let args: Vec<String> = env::args().collect();
     let start = Instant::now();
     run_query(args[2].to_string(), args[1].to_string());

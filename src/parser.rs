@@ -33,6 +33,10 @@ named!(parse_text_operand<CompleteStr, QueryValue>,
 named!(parse_regex_operand<CompleteStr, QueryValue>,
        map!(tuple!(tag!("r"), delimited!(char!('"'), take_until_s!("\""), char!('"'))),
             |t| QueryValue::Regex(Regex::new(&t.1.to_string()).unwrap())));
+
+named!(parse_date_operand<CompleteStr, QueryValue>,
+       map!(tuple!(tag!("d"), delimited!(char!('"'), take_until_s!("\""), char!('"'))),
+            |t| QueryValue::Date(create_date_from_string(t.1.to_string()))));
        
 named!(parse_symbol_operand<CompleteStr, QueryValue>,
        map!(take_while!(is_symbol),
@@ -49,6 +53,7 @@ named!(parse_double_operand<CompleteStr, QueryValue>,
 named!(parse_filter_operand<CompleteStr, QueryValue>,
        alt!(parse_text_operand |
             parse_regex_operand |
+            parse_date_operand |
             parse_boolean_operand |
             parse_null_operand |
             parse_symbol_operand |
@@ -169,6 +174,17 @@ fn is_symbol(chr: char) -> bool {
     chr.is_alphanumeric() || chr == '_'
 }
 
+fn create_date_from_string(date: String) -> DateTime<Utc> {
+    if date.len() <= 10 {
+        let dt = date + " 00:00:00";
+        Local.datetime_from_str(&dt, "%m-%d-%Y %H:%M:%S").unwrap().with_timezone(&Utc)
+    } else if date.len() <= 20 {
+        Local.datetime_from_str(&date, "%m-%d-%Y %H:%M:%S").unwrap().with_timezone(&Utc)
+    } else {
+        DateTime::parse_from_str(&date, "%m-%d-%Y %H:%M:%S %z").unwrap().with_timezone(&Utc)
+    }
+}
+
 pub fn parse_query(query: String) -> RipLogQuery {
     parse_riplog_query(CompleteStr(&query)).unwrap().1
 }
@@ -245,8 +261,17 @@ pub enum QueryValue {
     Int(i64, Vec<u8>),
     Double(f64, Vec<u8>),
     Boolean(bool),
-    Date(DateTime<FixedOffset>),
+    Date(DateTime<Utc>),
     Null,
+}
+
+impl QueryValue {
+    pub fn is_date(&self) -> bool {
+        match self {
+            QueryValue::Date(_) => true,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

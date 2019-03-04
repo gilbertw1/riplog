@@ -165,7 +165,7 @@ pub fn parse_log_record(line: &str) -> NginxLogRecord {
 
         NginxLogRecord {
             ip: ip,
-            date: DateTime::parse_from_str(date, "%d/%b/%Y:%H:%M:%S %z").unwrap(),
+            date: DateTime::parse_from_str(date, "%d/%b/%Y:%H:%M:%S %z").unwrap().with_timezone(&Utc),
             method: method,
             path: path,
             query: query,
@@ -192,7 +192,7 @@ fn empty_opt(bytes: &[u8]) -> Option<&[u8]> {
 #[derive(Debug, Clone)]
 pub struct NginxLogRecord<'a> {
     ip: &'a str,
-    date: DateTime<FixedOffset>,
+    date: DateTime<Utc>,
     method: Option<&'a str>,
     path: &'a str,
     query: Option<&'a str>,
@@ -244,13 +244,13 @@ impl BinaryNginxLogRecord {
         }
     }
 
-    pub fn parsed_date(&mut self) -> DateTime<FixedOffset> {
+    pub fn parsed_date(&mut self) -> &DateTime<Utc> {
         unsafe {
             if self.parsed_record.date.is_some() {
-                self.parsed_record.date.unwrap()
+                self.parsed_record.date.as_ref().unwrap()
             } else {
-                self.parsed_record.date = DateTime::parse_from_str(&String::from_utf8_unchecked(self.date.clone()), "%d/%b/%Y:%H:%M:%S %z").ok();
-                self.parsed_record.date.unwrap()
+                self.parsed_record.date = DateTime::parse_from_str(&String::from_utf8_unchecked(self.date.clone()), "%d/%b/%Y:%H:%M:%S %z").ok().map(|d| d.with_timezone(&Utc));
+                self.parsed_record.date.as_ref().unwrap()
             }
         }
     }
@@ -348,7 +348,7 @@ impl BinaryNginxLogRecord {
 #[derive(Debug, Clone)]
 pub struct ParsedNginxLogRecord {
     ip: Option<String>,
-    date: Option<DateTime<FixedOffset>>,
+    date: Option<DateTime<Utc>>,
     method: Option<Option<String>>,
     path: Option<String>,
     query: Option<Option<String>>,

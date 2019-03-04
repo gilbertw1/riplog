@@ -23,7 +23,7 @@ pub enum ColumnDefinition<T> {
            extractor: Box<Fn(&mut T) -> Option<&str>> },
     Date { name: &'static str,
            binary_extractor: Box<Fn(&T) -> Option<&[u8]>>,
-           extractor: Box<Fn(&mut T) -> Option<DateTime<FixedOffset>>> },
+           extractor: Box<Fn(&mut T) -> Option<&DateTime<Utc>>> },
     Boolean { name: &'static str,
               binary_extractor: Box<Fn(&T) -> Option<&[u8]>>,
               extractor: Box<Fn(&mut T) -> Option<bool>> }
@@ -240,16 +240,36 @@ impl<T> QueryEvaluator<T> {
         op1bytes.is_some() && op2bytes.is_some() && op1bytes.unwrap() == op2bytes.unwrap()
     }
 
-    fn evaluate_lt(&mut self, operand1: &QueryValue, operand2: &QueryValue, record: &Record<T>) -> bool {
-        let op1bytes = record.resolve_byte_value(operand1);
-        let op2bytes = record.resolve_byte_value(operand2);
-        op1bytes.is_some() && op2bytes.is_some() && op1bytes.unwrap() < op2bytes.unwrap()
+    fn evaluate_lt(&mut self, operand1: &QueryValue, operand2: &QueryValue, record: &mut Record<T>) -> bool {
+        if operand2.is_date() {
+            match (operand1, operand2)  {
+                (QueryValue::Symbol(symbol), QueryValue::Date(date)) => {
+                    let date_value = record.get_symbol_date(symbol);
+                    date_value.is_some() && date_value.unwrap() < date
+                }
+                _ => false
+            }
+        } else {
+            let op1bytes = record.resolve_byte_value(operand1);
+            let op2bytes = record.resolve_byte_value(operand2);
+            op1bytes.is_some() && op2bytes.is_some() && op1bytes.unwrap() < op2bytes.unwrap()
+        }
     }
 
-    fn evaluate_gt(&mut self, operand1: &QueryValue, operand2: &QueryValue, record: &Record<T>) -> bool {
-        let op1bytes = record.resolve_byte_value(operand1);
-        let op2bytes = record.resolve_byte_value(operand2);
-        op1bytes.is_some() && op2bytes.is_some() && op1bytes.unwrap() > op2bytes.unwrap()
+    fn evaluate_gt(&mut self, operand1: &QueryValue, operand2: &QueryValue, record: &mut Record<T>) -> bool {
+        if operand2.is_date() {
+            match (operand1, operand2)  {
+                (QueryValue::Symbol(symbol), QueryValue::Date(date)) => {
+                    let date_value = record.get_symbol_date(symbol);
+                    date_value.is_some() && date_value.unwrap() > date
+                }
+                _ => false
+            }
+        } else {
+            let op1bytes = record.resolve_byte_value(operand1);
+            let op2bytes = record.resolve_byte_value(operand2);
+            op1bytes.is_some() && op2bytes.is_some() && op1bytes.unwrap() > op2bytes.unwrap()
+        }
     }
 
     // TODO: Make work with arbitrary values (borrow checker woes)
@@ -331,6 +351,14 @@ impl<'i, T> Record<'i, T> {
         }
     }
 
+    fn resolve_date_value<'a>(&'a mut self, value: &'a QueryValue) -> Option<&DateTime<Utc>> {
+        match value {
+            QueryValue::Date(date) => Some(date),
+            QueryValue::Symbol(symbol) => self.get_symbol_date(symbol),
+            _ => None
+        }
+    }
+
     fn resolve_string_value<'a>(&'a mut self, value: &'a QueryValue) -> Option<&'a str> {
         match value {
             QueryValue::Text(value, _) => Some(&value),
@@ -342,6 +370,13 @@ impl<'i, T> Record<'i, T> {
     fn get_symbol_string<'b>(&'b mut self, symbol: &str) -> Option<&'b str> {
         match get_symbol_definition(&self.definition, symbol) {
             ColumnDefinition::Text { extractor, .. } => extractor(self.item),
+            _ => None
+        }
+    }
+
+    fn get_symbol_date<'b>(&'b mut self, symbol: &str) -> Option<&'b DateTime<Utc>> {
+        match get_symbol_definition(&self.definition, symbol) {
+            ColumnDefinition::Date { extractor, .. } => extractor(self.item),
             _ => None
         }
     }
