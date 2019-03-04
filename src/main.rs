@@ -3,12 +3,14 @@ extern crate nom;
 extern crate regex;
 extern crate chrono;
 extern crate byteorder;
+extern crate flate2;
 
 use std::fs::{self, File};
 use std::path::Path;
 use std::env;
 use std::io::{self, BufRead, BufReader};
 use std::time::Instant;
+use flate2::read::GzDecoder;
 
 mod query;
 mod log;
@@ -62,7 +64,22 @@ fn evaluate_query_log_dir(dir: &Path, evaluator: &mut QueryEvaluator<BinaryNginx
 }
 
 fn evaluate_query_log_file(file: &Path, evaluator: &mut QueryEvaluator<BinaryNginxLogRecord>) -> io::Result<()> {
-    if file.file_name().unwrap().to_str().unwrap().contains("access.log") {
+    if !file.file_name().unwrap().to_str().unwrap().contains("error") && file.file_name().unwrap().to_str().unwrap().ends_with(".gz") {
+        let file = File::open(file)?;
+        let mut reader = BufReader::new(GzDecoder::new(file));
+        let mut buf = vec![];
+        let mut record = BinaryNginxLogRecord::empty();
+
+        loop {
+            buf.clear();
+            let size = reader.read_until(b'\n', &mut buf).unwrap();
+            if size <= 0 {
+                break;
+            }
+            log::read_log_record_binary(&buf, size, &mut record);
+            evaluator.evaluate(&mut record);
+        }
+    } else if file.file_name().unwrap().to_str().unwrap().contains("access.log") {
         let file = File::open(file)?;
         let mut reader = BufReader::new(file);
         let mut buf = vec![];
