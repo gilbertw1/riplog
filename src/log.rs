@@ -27,20 +27,33 @@ pub fn read_log_record_binary(buf: &Vec<u8>, len: usize, record: &mut BinaryNgin
     let working = &working[quote_idx+2..working.len()];
 
     let req_space_idx = index_of(request, b' ');
-    let (method, path) =
+    let (method, path, query) =
         if req_space_idx.is_some() {
             let method = &request[0..req_space_idx.unwrap()];
             let req_working = &request[req_space_idx.unwrap()+1..request.len()];
             let req_space_idx = index_of(req_working, b' ');
+            let req_question_idx = index_of(req_working, b'?');
             let path =
-                if req_space_idx.is_some() {
+                if req_question_idx.is_some() {
+                    &req_working[0..req_question_idx.unwrap()]
+                } else if req_space_idx.is_some() {
                     &req_working[0..req_space_idx.unwrap()]
                 } else {
                     req_working
                 };
-            (method, path)
+            let query =
+                if req_question_idx.is_some() {
+                    if req_space_idx.is_some() {
+                        &req_working[req_question_idx.unwrap()..req_space_idx.unwrap()]
+                    } else {
+                        &req_working[req_question_idx.unwrap()..]
+                    }
+                } else {
+                    empty
+                };
+            (method, path, query)
         } else {
-            (empty, request)
+            (empty, request, empty)
         };
     
     let space_idx = index_of(working, b' ').unwrap();
@@ -62,6 +75,7 @@ pub fn read_log_record_binary(buf: &Vec<u8>, len: usize, record: &mut BinaryNgin
     record.date = date.to_vec();
     record.method = method.to_vec();
     record.path = path.to_vec();
+    record.query = query.to_vec();
     record.status = status.to_vec();
     record.bytes = bytes.to_vec();
     record.referrer = referrer.to_vec();
@@ -71,6 +85,7 @@ pub fn read_log_record_binary(buf: &Vec<u8>, len: usize, record: &mut BinaryNgin
     record.parsed_record.date = None;
     record.parsed_record.method = None;
     record.parsed_record.path = None;
+    record.parsed_record.query = None;
     record.parsed_record.status = None;
     record.parsed_record.bytes = None;
     record.parsed_record.referrer = None;
@@ -110,20 +125,28 @@ pub fn parse_log_record(line: &str) -> NginxLogRecord {
         let rest = rest.get_unchecked(quote_idx+2..rest.len());
 
         let req_space_idx = request.find(" ");
-        let (method,path) =
+        let (method, path, query) =
             if req_space_idx.is_some() {
                 let method = request.get_unchecked(0..req_space_idx.unwrap());
                 let req_rest = request.get_unchecked(req_space_idx.unwrap()+1..request.len());
                 let req_space_idx = req_rest.find(" ");
-                let path =
+                let full_path =
                     if req_space_idx.is_some() {
                         req_rest.get_unchecked(0..req_space_idx.unwrap())
                     } else {
                         req_rest
                     };
-                (Some(method), path)
+                let question_idx = full_path.find("?");
+                let (path, query) =
+                    if question_idx.is_some() {
+                        let pq = full_path.split_at(question_idx.unwrap());
+                        (pq.0, Some(pq.1))
+                    } else {
+                        (full_path, None)
+                    };
+                (Some(method), path, query)
             } else {
-                (None, request)
+                (None, request, None)
             };
 
         let space_idx = rest.find(" ").unwrap();
@@ -145,6 +168,7 @@ pub fn parse_log_record(line: &str) -> NginxLogRecord {
             date: DateTime::parse_from_str(date, "%d/%b/%Y:%H:%M:%S %z").unwrap(),
             method: method,
             path: path,
+            query: query,
             status: if is_empty(status) { None } else { Some(status.parse::<u64>().unwrap()) },
             bytes: if is_empty(bytes_sent) { None } else { Some(bytes_sent.parse::<u64>().unwrap()) },
             referrer: if is_empty(referrer) { None } else { Some(referrer) },
@@ -171,6 +195,7 @@ pub struct NginxLogRecord<'a> {
     date: DateTime<FixedOffset>,
     method: Option<&'a str>,
     path: &'a str,
+    query: Option<&'a str>,
     status: Option<u64>,
     bytes: Option<u64>,
     referrer: Option<&'a str>,
@@ -183,6 +208,7 @@ pub struct BinaryNginxLogRecord {
     pub date: Vec<u8>,
     pub method: Vec<u8>,
     pub path: Vec<u8>,
+    pub query: Vec<u8>,
     pub status: Vec<u8>,
     pub bytes: Vec<u8>,
     pub referrer: Vec<u8>,
@@ -198,6 +224,7 @@ impl BinaryNginxLogRecord {
             date: Vec::new(),
             method: Vec::new(),
             path: Vec::new(),
+            query: Vec::new(),
             status: Vec::new(),
             bytes: Vec::new(),
             referrer: Vec::new(),
@@ -248,6 +275,19 @@ impl BinaryNginxLogRecord {
             } else {
                 self.parsed_record.path = Some(String::from_utf8_unchecked(self.path.clone()));
                 &self.parsed_record.path.as_ref().unwrap()
+            }
+        }
+    }
+
+    pub fn parsed_query(&mut self) -> Option<&str> {
+        unsafe {
+            if self.parsed_record.query.is_some() {
+                self.parsed_record.query.as_ref().unwrap().as_ref().map(|s| s.as_str())
+            } else {
+                self.parsed_record.query =
+                    if self.query.len() < 1 { Some(None) }
+                else { Some(Some(String::from_utf8_unchecked(self.query.clone()))) };
+                self.parsed_record.query.as_ref().unwrap().as_ref().map(|s| s.as_str())
             }
         }
     }
@@ -311,6 +351,7 @@ pub struct ParsedNginxLogRecord {
     date: Option<DateTime<FixedOffset>>,
     method: Option<Option<String>>,
     path: Option<String>,
+    query: Option<Option<String>>,
     status: Option<Option<u64>>,
     bytes: Option<Option<u64>>,
     referrer: Option<Option<String>>,
@@ -324,6 +365,7 @@ impl ParsedNginxLogRecord {
             date: None,
             method: None,
             path: None,
+            query: None,
             status: None,
             bytes: None,
             referrer: None,
@@ -346,6 +388,9 @@ pub fn create_nginx_log_record_table_definition<'a>() -> TableDefinition<BinaryN
             ColumnDefinition::Text { name: "path",
                                      binary_extractor: Box::new(|r: &BinaryNginxLogRecord| empty_opt(&r.path)),
                                      extractor: Box::new(|r: &mut BinaryNginxLogRecord| Some(r.parsed_path())) },
+            ColumnDefinition::Text { name: "query",
+                                     binary_extractor: Box::new(|r: &BinaryNginxLogRecord| empty_opt(&r.query)),
+                                     extractor: Box::new(|r: &mut BinaryNginxLogRecord| r.parsed_query()) },
             ColumnDefinition::Integer { name: "status",
                                         binary_extractor: Box::new(|r: &BinaryNginxLogRecord| empty_opt(&r.status)),
                                         extractor: Box::new({ |r: &mut BinaryNginxLogRecord| r.parsed_status() }) },

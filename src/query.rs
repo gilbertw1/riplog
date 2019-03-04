@@ -596,7 +596,7 @@ impl<T> RecordFormatter<T> {
     pub fn format_closing_row(&mut self) {
         let mut len = 1;
         for field in &mut self.fields {
-            len += field.size()+1
+            len += field.size()+3
         }
         let pad = (0..len-2).map(|_| "-").collect::<String>();
         println!("+{}+", pad);
@@ -660,7 +660,7 @@ impl<T> OutputField<T> for SymbolOutputField {
         if self.size < self.symbol.len()+2 {
             self.size = self.symbol.len()+2;
         }
-        format!("{:width$}", self.symbol, width = self.size)
+        format!(" {:width$} ", self.symbol, width = self.size)
     }
 
     fn format_field(&mut self, record: Option<&mut Record<T>>, group_key: Option<&Vec<String>>, reducer: Option<&Reducer<T>>) -> String {
@@ -670,10 +670,10 @@ impl<T> OutputField<T> for SymbolOutputField {
             } else {
                 "null".to_owned()
             };
-        if self.size < output.len()+2 {
+        if self.size < output.len()+2 && self.size < 50 {
             self.size = output.len()+2;
         }
-        format!("{:width$}", output, width = self.size)
+        format!(" {:width$} ", output, width = self.size)
     }
 
     fn size(&self) -> usize {
@@ -692,7 +692,7 @@ impl<T> OutputField<T> for GroupOutputField {
         if self.size < self.symbol.len()+2 {
             self.size = self.symbol.len()+2;
         }
-        format!("{:width$}", self.symbol, width = self.size)
+        format!(" {:width$} ", self.symbol, width = self.size)
     }
 
     fn format_field(&mut self, record: Option<&mut Record<T>>, group_key: Option<&Vec<String>>, reducer: Option<&Reducer<T>>) -> String {
@@ -702,10 +702,10 @@ impl<T> OutputField<T> for GroupOutputField {
             } else {
                 "null".to_owned()
             };
-        if self.size < output.len()+2 {
+        if self.size < output.len()+2 && self.size < 50 {
             self.size = output.len()+2;
         }
-        format!("{:width$}", output, width = self.size)
+        format!(" {:width$} ", output, width = self.size)
     }
 
     fn size(&self) -> usize {
@@ -726,7 +726,7 @@ impl<T> OutputField<T> for ReducedOutputField {
         if self.size < name.len()+2 {
             self.size = name.len()+2;
         }
-        format!("{:width$}", name, width = self.size)
+        format!(" {:width$} ", name, width = self.size)
     }
 
     fn format_field(&mut self, record: Option<&mut Record<T>>, group_key: Option<&Vec<String>>, reducer: Option<&Reducer<T>>) -> String {
@@ -736,10 +736,10 @@ impl<T> OutputField<T> for ReducedOutputField {
             } else {
                 "null".to_owned()
             };
-        if self.size < output.len()+2 {
+        if self.size < output.len()+2 && self.size < 50 {
             self.size = output.len()+2;
         }
-        format!("{:width$}", output, width = self.size)
+        format!(" {:width$} ", output, width = self.size)
     }
 
     fn size(&self) -> usize {
