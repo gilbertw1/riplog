@@ -165,7 +165,7 @@ pub fn parse_log_record(line: &str) -> NginxLogRecord {
 
         NginxLogRecord {
             ip: ip,
-            date: DateTime::parse_from_str(date, "%d/%b/%Y:%H:%M:%S %z").unwrap().with_timezone(&Utc),
+            date: DateTime::parse_from_str(date, "%d/%b/%Y:%H:%M:%S %z").unwrap().with_timezone(&Local),
             method: method,
             path: path,
             query: query,
@@ -192,7 +192,7 @@ fn empty_opt(bytes: &[u8]) -> Option<&[u8]> {
 #[derive(Debug, Clone)]
 pub struct NginxLogRecord<'a> {
     ip: &'a str,
-    date: DateTime<Utc>,
+    date: DateTime<Local>,
     method: Option<&'a str>,
     path: &'a str,
     query: Option<&'a str>,
@@ -244,12 +244,12 @@ impl BinaryNginxLogRecord {
         }
     }
 
-    pub fn parsed_date(&mut self) -> &DateTime<Utc> {
+    pub fn parsed_date(&mut self) -> &DateTime<Local> {
         unsafe {
             if self.parsed_record.date.is_some() {
                 self.parsed_record.date.as_ref().unwrap()
             } else {
-                self.parsed_record.date = DateTime::parse_from_str(&String::from_utf8_unchecked(self.date.clone()), "%d/%b/%Y:%H:%M:%S %z").ok().map(|d| d.with_timezone(&Utc));
+                self.parsed_record.date = DateTime::parse_from_str(&String::from_utf8_unchecked(self.date.clone()), "%d/%b/%Y:%H:%M:%S %z").ok().map(|d| d.with_timezone(&Local));
                 self.parsed_record.date.as_ref().unwrap()
             }
         }
@@ -348,7 +348,7 @@ impl BinaryNginxLogRecord {
 #[derive(Debug, Clone)]
 pub struct ParsedNginxLogRecord {
     ip: Option<String>,
-    date: Option<DateTime<Utc>>,
+    date: Option<DateTime<Local>>,
     method: Option<Option<String>>,
     path: Option<String>,
     query: Option<Option<String>>,
@@ -377,30 +377,39 @@ impl ParsedNginxLogRecord {
 pub fn create_nginx_log_record_table_definition<'a>() -> TableDefinition<BinaryNginxLogRecord> {
     let columns = vec![
             ColumnDefinition::Text { name: "ip",
+                                     size: 15,
                                      binary_extractor: Box::new(|r: &BinaryNginxLogRecord| empty_opt(&r.ip)),
                                      extractor: Box::new(|r: &mut BinaryNginxLogRecord| Some(r.parsed_ip())) },
             ColumnDefinition::Date { name: "date",
+                                     size: 26,
                                      binary_extractor: Box::new(|r: &BinaryNginxLogRecord| empty_opt(&r.date)),
                                      extractor: Box::new(|r: &mut BinaryNginxLogRecord| Some(r.parsed_date())) },
             ColumnDefinition::Text { name: "method",
+                                     size: 5,
                                      binary_extractor: Box::new(|r: &BinaryNginxLogRecord| empty_opt(&r.method)),
                                      extractor: Box::new(|r: &mut BinaryNginxLogRecord| r.parsed_method()) },
             ColumnDefinition::Text { name: "path",
+                                     size: 20,
                                      binary_extractor: Box::new(|r: &BinaryNginxLogRecord| empty_opt(&r.path)),
                                      extractor: Box::new(|r: &mut BinaryNginxLogRecord| Some(r.parsed_path())) },
             ColumnDefinition::Text { name: "query",
+                                     size: 50,
                                      binary_extractor: Box::new(|r: &BinaryNginxLogRecord| empty_opt(&r.query)),
                                      extractor: Box::new(|r: &mut BinaryNginxLogRecord| r.parsed_query()) },
             ColumnDefinition::Integer { name: "status",
+                                        size: 3,
                                         binary_extractor: Box::new(|r: &BinaryNginxLogRecord| empty_opt(&r.status)),
                                         extractor: Box::new({ |r: &mut BinaryNginxLogRecord| r.parsed_status() }) },
             ColumnDefinition::Integer { name: "bytes",
+                                        size: 10,
                                         binary_extractor: Box::new(|r: &BinaryNginxLogRecord| empty_opt(&r.bytes)),
                                         extractor: Box::new({ |r: &mut BinaryNginxLogRecord| r.parsed_bytes() }) },
             ColumnDefinition::Text { name: "referrer",
+                                     size: 50,
                                      binary_extractor: Box::new(|r: &BinaryNginxLogRecord| empty_opt(&r.referrer)),
                                      extractor: Box::new(|r: &mut BinaryNginxLogRecord| r.parsed_referrer()) },
             ColumnDefinition::Text { name: "user_agent",
+                                     size: 50,
                                      binary_extractor: Box::new(|r: &BinaryNginxLogRecord| empty_opt(&r.user_agent)),
                                      extractor: Box::new(|r: &mut BinaryNginxLogRecord| r.parsed_user_agent()) },
         ];

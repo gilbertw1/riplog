@@ -1,6 +1,7 @@
 use std::result;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::cmp::Ordering;
 use chrono::prelude::*;
 use parser::*;
 
@@ -13,18 +14,23 @@ pub struct TableDefinition<T> {
 
 pub enum ColumnDefinition<T> {
     Integer { name: &'static str,
+              size: usize,
               binary_extractor: Box<Fn(&T) -> Option<&[u8]>>,
               extractor: Box<Fn(&mut T) -> Option<u64>> },
     Double { name: &'static str,
+             size: usize,
              binary_extractor: Box<Fn(&T) -> Option<&[u8]>>,
              extractor: Box<Fn(&mut T) -> Option<f64>> },
     Text { name: &'static str,
+           size: usize,
            binary_extractor: Box<Fn(&T) -> Option<&[u8]>>,
            extractor: Box<Fn(&mut T) -> Option<&str>> },
     Date { name: &'static str,
+           size: usize,
            binary_extractor: Box<Fn(&T) -> Option<&[u8]>>,
-           extractor: Box<Fn(&mut T) -> Option<&DateTime<Utc>>> },
+           extractor: Box<Fn(&mut T) -> Option<&DateTime<Local>>> },
     Boolean { name: &'static str,
+              size: usize,
               binary_extractor: Box<Fn(&T) -> Option<&[u8]>>,
               extractor: Box<Fn(&mut T) -> Option<bool>> }
 }
@@ -47,6 +53,16 @@ impl<T> ColumnDefinition<T> {
             ColumnDefinition::Integer { binary_extractor, ..} => binary_extractor(record),
             ColumnDefinition::Boolean { binary_extractor, ..} => binary_extractor(record),
             ColumnDefinition::Date { binary_extractor, ..} => binary_extractor(record),
+        }
+    }
+
+    pub fn get_size(&self) -> &usize {
+        match self {
+            ColumnDefinition::Text { size, ..} => size,
+            ColumnDefinition::Double { size, ..} => size,
+            ColumnDefinition::Integer { size, ..} => size,
+            ColumnDefinition::Boolean { size, ..} => size,
+            ColumnDefinition::Date { size, ..} => size,
         }
     }
 }
@@ -150,6 +166,7 @@ impl<T> QueryEvaluator<T> {
         let mut rquery = query;
         rquery.compute_show(&definition);
         let query_rc = Rc::new(rquery);
+        let formatter = RecordFormatter::new(&query_rc, &definition);
         let mut evaluator =
             QueryEvaluator {
                 query: query_rc.clone(),
@@ -157,7 +174,7 @@ impl<T> QueryEvaluator<T> {
                 group_map: HashMap::new(),
                 global_reducer: create_reducer(&query_rc),
                 aggregate: is_aggregate_query(&query_rc),
-                record_formatter: RecordFormatter::new(&query_rc),
+                record_formatter: formatter,
             };
         if !evaluator.aggregate {
             evaluator.record_formatter.format_header_row();
@@ -188,11 +205,32 @@ impl<T> QueryEvaluator<T> {
     }
 
     pub fn finalize(&mut self) {
+        let limit = &self.query.limit.as_ref().map(|l| l.limit.clone());
         if self.aggregate {
             self.record_formatter.format_header_row();
             if self.query.grouping.is_some() {
-                for (keys, reducer) in &self.group_map {
-                    self.record_formatter.format_grouped_record(keys, reducer);
+                if self.record_formatter.sortable() {
+                    let mut results: Vec<(&Vec<String>, &Reducer<T>)> = self.group_map.iter().collect();
+                    results.sort_unstable_by(|a,b| self.record_formatter.sort_grouped(a.0, a.1, b.0, b.1));
+                    if limit.is_some() {
+                        for (keys, reducer) in results.iter().take(limit.unwrap()) {
+                            self.record_formatter.format_grouped_record(keys, reducer);
+                        }
+                    } else {
+                        for (keys, reducer) in results {
+                            self.record_formatter.format_grouped_record(keys, reducer);
+                        }
+                    }
+                } else {
+                    if limit.is_some() {
+                        for (keys, reducer) in self.group_map.iter().take(limit.unwrap()) {
+                            self.record_formatter.format_grouped_record(keys, reducer);
+                        }
+                    } else {
+                        for (keys, reducer) in &self.group_map {
+                            self.record_formatter.format_grouped_record(keys, reducer);
+                        }
+                    }
                 }
             } else {
                 self.record_formatter.format_reduced_record(&self.global_reducer);
@@ -351,7 +389,7 @@ impl<'i, T> Record<'i, T> {
         }
     }
 
-    fn resolve_date_value<'a>(&'a mut self, value: &'a QueryValue) -> Option<&DateTime<Utc>> {
+    fn resolve_date_value<'a>(&'a mut self, value: &'a QueryValue) -> Option<&DateTime<Local>> {
         match value {
             QueryValue::Date(date) => Some(date),
             QueryValue::Symbol(symbol) => self.get_symbol_date(symbol),
@@ -374,7 +412,7 @@ impl<'i, T> Record<'i, T> {
         }
     }
 
-    fn get_symbol_date<'b>(&'b mut self, symbol: &str) -> Option<&'b DateTime<Utc>> {
+    fn get_symbol_date<'b>(&'b mut self, symbol: &str) -> Option<&'b DateTime<Local>> {
         match get_symbol_definition(&self.definition, symbol) {
             ColumnDefinition::Date { extractor, .. } => extractor(self.item),
             _ => None
@@ -564,33 +602,62 @@ impl<T> ResultsPrinter<T> {
 }
 
 struct RecordFormatter<T> {
-    fields: Vec<Box<OutputField<T>>>
+    fields: Vec<Box<OutputField<T>>>,
+    sort: Option<(Box<OutputField<T>>,QuerySortOrdering)>,
 }
 
 impl<T> RecordFormatter<T> {
 
-    pub fn new(query: &RipLogQuery) -> RecordFormatter<T> {
+    pub fn new(query: &RipLogQuery, definition: &TableDefinition<T>) -> RecordFormatter<T> {
         let mut fields: Vec<Box<OutputField<T>>> = Vec::new();
+        let mut sort: Option<(Box<OutputField<T>>,QuerySortOrdering)> = None;
+        let sort_value = query.sort.as_ref().and_then(|e| e.sortings.first().clone());
         for element in &query.computed_show.as_ref().unwrap().elements {
             match element {
                 QueryShowElement::Symbol(symbol) => {
                     let group_idx = get_group_idx(&symbol, query);
+                    let size = definition.column_map.get(symbol).map(|d| d.get_size().clone()).unwrap_or(10);
                     if group_idx.is_some() {
-                        fields.push(Box::new(GroupOutputField { symbol: symbol.clone(), idx: group_idx.unwrap(), size: 10 }));
+                        let field: Box<OutputField<T>> = Box::new(GroupOutputField { symbol: symbol.clone(), idx: group_idx.unwrap(), size: size });
+                        if sort_value.is_some() && sort_value.unwrap().field == field.name() {
+                            sort = Some((Box::new(GroupOutputField { symbol: symbol.clone(), idx: group_idx.unwrap(), size: size }), sort_value.unwrap().order.clone()));
+                        }
+                        fields.push(field);
                     } else {
-                        fields.push(Box::new(SymbolOutputField { symbol: symbol.clone(), size: 10 }));
+                        fields.push(Box::new(SymbolOutputField { symbol: symbol.clone(), size: size }));
                     }
                 },
                 QueryShowElement::Reducer(reducer, symbol) => {
                     let reduce_idx = get_reduce_idx(&symbol, &reducer, query);
                     if reduce_idx.is_some() {
-                        fields.push(Box::new(ReducedOutputField { reducer: reducer.to_string().to_owned(), symbol: symbol.clone(), idx: reduce_idx.unwrap(), size: 10 }));
+                        let field: Box<OutputField<T>> = Box::new(ReducedOutputField { reducer: reducer.to_string().to_owned(), symbol: symbol.clone(), idx: reduce_idx.unwrap(), size: 10 });
+                        if sort_value.is_some() && sort_value.unwrap().field == field.name() {
+                            sort = Some((Box::new(ReducedOutputField { reducer: reducer.to_string().to_owned(), symbol: symbol.clone(), idx: reduce_idx.unwrap(), size: 10 }), sort_value.unwrap().order.clone()));
+                        }
+                        fields.push(field);
                     }
                 }
                 _ => ()
             }
         }
-        RecordFormatter { fields }
+
+        RecordFormatter { fields: fields, sort: sort }
+    }
+
+    pub fn sort_grouped(&self, key1: &Vec<String>, reducer1: &Reducer<T>, key2: &Vec<String>, reducer2: &Reducer<T>) -> Ordering {
+        match self.sort {
+            Some((ref field, QuerySortOrdering::ASC)) => {
+                field.compare(None, Some(key1), Some(reducer1), None, Some(key2), Some(reducer2), false)
+            },
+            Some((ref field, QuerySortOrdering::DESC)) => {
+                field.compare(None, Some(key1), Some(reducer1), None, Some(key2), Some(reducer2), true)
+            },
+            _ => Ordering::Equal
+        }
+    }
+
+    pub fn sortable(&self) -> bool {
+        self.sort.is_some()
     }
     
     pub fn format_record(&mut self, record: &mut Record<T>) {
@@ -680,9 +747,12 @@ fn get_reduce_idx(symbol: &str, reducer: &QueryReducer, query: &RipLogQuery) -> 
 }
 
 trait OutputField<T> {
+    fn name(&self) -> String;
     fn header(&mut self) -> String;
     fn format_field(&mut self, record: Option<&mut Record<T>>, group_key: Option<&Vec<String>>, reducer: Option<&Reducer<T>>) -> String;
     fn size(&self) -> usize;
+    fn compare(&self, record1: Option<&mut Record<T>>, group_key1: Option<&Vec<String>>, reducer1: Option<&Reducer<T>>,
+                      record2: Option<&mut Record<T>>, group_key2: Option<&Vec<String>>, reducer2: Option<&Reducer<T>>, asc: bool) -> Ordering;
 }
 
 struct SymbolOutputField {
@@ -691,9 +761,13 @@ struct SymbolOutputField {
 }
 
 impl<T> OutputField<T> for SymbolOutputField {
+    fn name(&self) -> String {
+        self.symbol.clone()
+    }
+
     fn header(&mut self) -> String {
-        if self.size < self.symbol.len()+2 {
-            self.size = self.symbol.len()+2;
+        if self.size < self.symbol.len() {
+            self.size = self.symbol.len();
         }
         format!(" {:width$} ", self.symbol, width = self.size)
     }
@@ -705,10 +779,15 @@ impl<T> OutputField<T> for SymbolOutputField {
             } else {
                 "null".to_owned()
             };
-        if self.size < output.len()+2 && self.size < 50 {
-            self.size = output.len()+2;
+        if self.size < output.len() && self.size < 50 {
+            self.size = output.len();
         }
         format!(" {:width$} ", output, width = self.size)
+    }
+
+    fn compare(&self, record1: Option<&mut Record<T>>, group_key1: Option<&Vec<String>>, reducer1: Option<&Reducer<T>>,
+               record2: Option<&mut Record<T>>, group_key2: Option<&Vec<String>>, reducer2: Option<&Reducer<T>>, desc: bool) -> Ordering {
+        Ordering::Equal
     }
 
     fn size(&self) -> usize {
@@ -723,9 +802,13 @@ struct GroupOutputField {
 }
 
 impl<T> OutputField<T> for GroupOutputField {
+    fn name(&self) -> String {
+        self.symbol.clone()
+    }
+
     fn header(&mut self) -> String {
-        if self.size < self.symbol.len()+2 {
-            self.size = self.symbol.len()+2;
+        if self.size < self.symbol.len() {
+            self.size = self.symbol.len();
         }
         format!(" {:width$} ", self.symbol, width = self.size)
     }
@@ -737,10 +820,50 @@ impl<T> OutputField<T> for GroupOutputField {
             } else {
                 "null".to_owned()
             };
-        if self.size < output.len()+2 && self.size < 50 {
-            self.size = output.len()+2;
+        if self.size < output.len() && self.size < 50 {
+            self.size = output.len();
         }
         format!(" {:width$} ", output, width = self.size)
+    }
+
+    fn compare(&self, record1: Option<&mut Record<T>>, group_key1: Option<&Vec<String>>, reducer1: Option<&Reducer<T>>,
+               record2: Option<&mut Record<T>>, group_key2: Option<&Vec<String>>, reducer2: Option<&Reducer<T>>, desc: bool) -> Ordering {
+        let value1 = 
+            if group_key1.is_some() && group_key1.unwrap().len() >= (self.idx+1) {
+                Some(&group_key1.unwrap()[self.idx])
+            } else {
+                None
+            };
+
+        let value2 = 
+            if group_key2.is_some() && group_key2.unwrap().len() >= (self.idx+1) {
+                Some(&group_key2.unwrap()[self.idx])
+            } else {
+                None
+            };
+
+        if value1.is_some() && value2.is_some() {
+            let order = value1.unwrap().cmp(&value2.unwrap());
+            if desc {
+                order.reverse()
+            }  else {
+                order
+            }
+        } else if value1.is_some() {
+            if desc {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            }
+        } else if value2.is_some() {
+            if desc {
+                Ordering::Greater
+            } else {
+                Ordering::Less
+            }
+        } else {
+            Ordering::Equal
+        }
     }
 
     fn size(&self) -> usize {
@@ -756,10 +879,14 @@ struct ReducedOutputField {
 }
 
 impl<T> OutputField<T> for ReducedOutputField {
+    fn name(&self) -> String {
+        format!("{}({})", self.reducer, self.symbol)
+    }
+    
     fn header(&mut self) -> String {
         let name = format!("{}({})", self.reducer, self.symbol);
-        if self.size < name.len()+2 {
-            self.size = name.len()+2;
+        if self.size < name.len() {
+            self.size = name.len();
         }
         format!(" {:width$} ", name, width = self.size)
     }
@@ -771,10 +898,50 @@ impl<T> OutputField<T> for ReducedOutputField {
             } else {
                 "null".to_owned()
             };
-        if self.size < output.len()+2 && self.size < 50 {
-            self.size = output.len()+2;
+        if self.size < output.len() && self.size < 50 {
+            self.size = output.len();
         }
         format!(" {:width$} ", output, width = self.size)
+    }
+
+    fn compare(&self, record1: Option<&mut Record<T>>, group_key1: Option<&Vec<String>>, reducer1: Option<&Reducer<T>>,
+               record2: Option<&mut Record<T>>, group_key2: Option<&Vec<String>>, reducer2: Option<&Reducer<T>>, desc: bool) -> Ordering {
+        let value1 = 
+            if reducer1.is_some() && reducer1.unwrap().field_reducers.len() >= (self.idx+1) {
+                Some(reducer1.unwrap().field_reducers[self.idx].result())
+            } else {
+                None
+            };
+
+        let value2 = 
+            if reducer2.is_some() && reducer2.unwrap().field_reducers.len() >= (self.idx+1) {
+                Some(reducer2.unwrap().field_reducers[self.idx].result())
+            } else {
+                None
+            };
+
+        if value1.is_some() && value2.is_some() {
+            let order = value1.unwrap().cmp(&value2.unwrap());
+            if desc {
+                order.reverse()
+            }  else {
+                order
+            }
+        } else if value1.is_some() {
+            if desc {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            }
+        } else if value2.is_some() {
+            if desc {
+                Ordering::Greater
+            } else {
+                Ordering::Less
+            }
+        } else {
+            Ordering::Equal
+        }
     }
 
     fn size(&self) -> usize {

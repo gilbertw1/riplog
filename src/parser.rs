@@ -139,19 +139,19 @@ named!(parse_reducer<CompleteStr, QueryReducer>,
 
 named!(parse_sort<CompleteStr, QuerySort>,
        map!(tuple!(tag_no_case_s!("sort"),
-                   separated_list!(tag!(","),
-                                   ws!(map!(tuple!(take_while!(is_symbol),
-                                                   opt!(alt!(tag_no_case_s!("asc") |
-                                                             tag_no_case_s!("desc")))), |s| QuerySortElement::new(s.0.to_string().to_lowercase(), s.1.map(|st| st.to_string())))))),
-            |sortings| QuerySort { sortings: sortings.1 }));
+                   take_while!(is_whitespace),
+                   take_while!(is_symbol_or_parens),
+                   take_while!(is_whitespace),
+                   opt!(alt!(tag_no_case_s!("asc") | tag_no_case_s!("desc")))),
+            |s| QuerySort { sortings: vec![QuerySortElement::new(s.2.to_string().to_lowercase(), s.4.map(|st| st.to_string()))] }));
 
 ///////////
 // LIMIT //
 ///////////
 
 named!(parse_limit<CompleteStr, QueryLimit>,
-       map!(tuple!(tag_no_case_s!("limit"), nom::digit),
-            |limit| QueryLimit { limit: limit.1.parse::<u32>().unwrap() }));
+       map!(tuple!(tag_no_case_s!("limit"), take_while!(is_whitespace), nom::digit),
+            |limit| QueryLimit { limit: limit.2.parse::<usize>().unwrap() }));
 
 ///////////
 // QUERY //
@@ -170,18 +170,26 @@ named!(parse_riplog_query<CompleteStr, RipLogQuery>,
             |f| RipLogQuery { filter: f.0, grouping: f.2, show: f.4, sort: f.6, limit: f.8, computed_show: None }));
 
 
+fn is_whitespace(chr: char) -> bool {
+    chr == ' '
+}
+
 fn is_symbol(chr: char) -> bool {
     chr.is_alphanumeric() || chr == '_'
 }
 
-fn create_date_from_string(date: String) -> DateTime<Utc> {
+fn is_symbol_or_parens(chr: char) -> bool {
+    chr.is_alphanumeric() || chr == '_' || chr == '(' || chr == ')' || chr == '*'
+}
+
+fn create_date_from_string(date: String) -> DateTime<Local> {
     if date.len() <= 10 {
         let dt = date + " 00:00:00";
-        Local.datetime_from_str(&dt, "%m-%d-%Y %H:%M:%S").unwrap().with_timezone(&Utc)
+        Local.datetime_from_str(&dt, "%m-%d-%Y %H:%M:%S").unwrap().with_timezone(&Local)
     } else if date.len() <= 20 {
-        Local.datetime_from_str(&date, "%m-%d-%Y %H:%M:%S").unwrap().with_timezone(&Utc)
+        Local.datetime_from_str(&date, "%m-%d-%Y %H:%M:%S").unwrap().with_timezone(&Local)
     } else {
-        DateTime::parse_from_str(&date, "%m-%d-%Y %H:%M:%S %z").unwrap().with_timezone(&Utc)
+        DateTime::parse_from_str(&date, "%m-%d-%Y %H:%M:%S %z").unwrap().with_timezone(&Local)
     }
 }
 
@@ -261,7 +269,7 @@ pub enum QueryValue {
     Int(i64, Vec<u8>),
     Double(f64, Vec<u8>),
     Boolean(bool),
-    Date(DateTime<Utc>),
+    Date(DateTime<Local>),
     Null,
 }
 
@@ -372,5 +380,5 @@ impl QuerySortOrdering {
 
 #[derive(Debug, Clone)]
 pub struct QueryLimit {
-    pub limit: u32
+    pub limit: usize
 }
