@@ -36,7 +36,7 @@ fn run_query(query: String, path: String) {
     let mut evaluator = QueryEvaluator::<BinaryNginxLogRecord>::new(query, definition);
 
     let path = Path::new(&path);
-    evaluate_query_log_file_or_dir(path, &mut evaluator);
+    evaluate_query_log_file_or_dir(path, &mut evaluator).unwrap();
     evaluator.finalize();
 }
 
@@ -57,7 +57,7 @@ fn evaluate_query_log_dir(dir: &Path, evaluator: &mut QueryEvaluator<BinaryNginx
         if path.is_dir() {
             evaluate_query_log_dir(&path, evaluator)?;
         } else {
-            evaluate_query_log_file(&path, evaluator)?;
+            evaluate_query_log_file(&path, evaluator);
         }
     }
     Ok(())

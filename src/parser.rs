@@ -185,9 +185,9 @@ fn is_symbol_or_parens(chr: char) -> bool {
 fn create_date_from_string(date: String) -> DateTime<Local> {
     if date.len() <= 10 {
         let dt = date + " 00:00:00";
-        Local.datetime_from_str(&dt, "%m-%d-%Y %H:%M:%S").unwrap().with_timezone(&Local)
+        Local.datetime_from_str(&dt, "%m-%d-%Y %H:%M:%S").unwrap()
     } else if date.len() <= 20 {
-        Local.datetime_from_str(&date, "%m-%d-%Y %H:%M:%S").unwrap().with_timezone(&Local)
+        Local.datetime_from_str(&date, "%m-%d-%Y %H:%M:%S").unwrap()
     } else {
         DateTime::parse_from_str(&date, "%m-%d-%Y %H:%M:%S %z").unwrap().with_timezone(&Local)
     }
