@@ -158,6 +158,7 @@ pub struct QueryEvaluator<T> {
     global_reducer: Reducer<T>,
     aggregate: bool,
     record_formatter: RecordFormatter<T>,
+    printed_count: usize,
 }
 
 impl<T> QueryEvaluator<T> {
@@ -175,6 +176,7 @@ impl<T> QueryEvaluator<T> {
                 global_reducer: create_reducer(&query_rc),
                 aggregate: is_aggregate_query(&query_rc),
                 record_formatter: formatter,
+                printed_count: 0,
             };
         if !evaluator.aggregate {
             evaluator.record_formatter.format_header_row();
@@ -189,8 +191,14 @@ impl<T> QueryEvaluator<T> {
                 self.aggregate(&mut record);
             } else {
                 self.record_formatter.format_record(&mut record);
+                self.printed_count += 1;
             }
         }
+    }
+
+    pub fn should_stop(&self) -> bool {
+        let limit = &self.query.limit.as_ref().map(|l| l.limit.clone());
+        limit.is_some() && self.printed_count >= limit.unwrap()
     }
 
     fn aggregate(&mut self, record: &mut Record<T>) {

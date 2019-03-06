@@ -51,6 +51,9 @@ fn evaluate_query_log_file_or_dir(path: &Path, evaluator: &mut QueryEvaluator<Bi
 
 fn evaluate_query_log_dir(dir: &Path, evaluator: &mut QueryEvaluator<BinaryNginxLogRecord>) -> io::Result<()> {
     for entry in fs::read_dir(dir)? {
+        if evaluator.should_stop() {
+            break;
+        }
         let entry = entry?;
         let path = entry.path();
 
@@ -71,6 +74,9 @@ fn evaluate_query_log_file(file: &Path, evaluator: &mut QueryEvaluator<BinaryNgi
         let mut record = BinaryNginxLogRecord::empty();
 
         loop {
+            if evaluator.should_stop() {
+                break;
+            }
             buf.clear();
             let size = reader.read_until(b'\n', &mut buf).unwrap();
             if size <= 0 {
@@ -86,6 +92,9 @@ fn evaluate_query_log_file(file: &Path, evaluator: &mut QueryEvaluator<BinaryNgi
         let mut record = BinaryNginxLogRecord::empty();
         
         loop {
+            if evaluator.should_stop() {
+                break;
+            }
             buf.clear();
             let size = reader.read_until(b'\n', &mut buf).unwrap();
             if size <= 0 {
