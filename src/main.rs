@@ -13,10 +13,10 @@ use std::time::Instant;
 use flate2::read::GzDecoder;
 
 mod query;
-mod log;
+mod nginx;
 mod parser;
 
-use log::BinaryNginxLogRecord;
+use nginx::BinaryNginxLogRecord;
 use query::QueryEvaluator;
 
 fn main() { 
@@ -28,9 +28,8 @@ fn main() {
 }
 
 fn run_query(query: String, path: String) {
-    let definition = log::create_nginx_log_record_table_definition();
+    let definition = nginx::create_nginx_log_record_table_definition();
     let query = parser::parse_query(query);
-    //println!("Query: {:?}", query);
     let result = query::validate_riplog_query(&query, &definition);
     result.unwrap();
     let mut evaluator = QueryEvaluator::<BinaryNginxLogRecord>::new(query, definition);
@@ -82,7 +81,7 @@ fn evaluate_query_log_file(file: &Path, evaluator: &mut QueryEvaluator<BinaryNgi
             if size <= 0 {
                 break;
             }
-            log::read_log_record_binary(&buf, size, &mut record);
+            nginx::read_log_record_binary(&buf, size, &mut record);
             evaluator.evaluate(&mut record);
         }
     } else if file.file_name().unwrap().to_str().unwrap().contains("access.log") {
@@ -100,7 +99,7 @@ fn evaluate_query_log_file(file: &Path, evaluator: &mut QueryEvaluator<BinaryNgi
             if size <= 0 {
                 break;
             }
-            log::read_log_record_binary(&buf, size, &mut record);
+            nginx::read_log_record_binary(&buf, size, &mut record);
             evaluator.evaluate(&mut record);
         }
     }

@@ -964,7 +964,7 @@ ubuntu@api-dev--001 80# cat /var/log/nginx/access.log | grep 1.1.1.1 | awk '{pri
 3 400
 1 182
 
-ip = "1.1.1.1" && path ~ "userid1234" | group status | show status, avg(bytes) | sort avg(bytes) | limit 100
+ip = "1.1.1.1" && query ~ "userid1234" | group status | show status, avg(bytes) | sort avg(bytes) | limit 100
 
 
 */

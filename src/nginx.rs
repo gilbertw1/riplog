@@ -105,78 +105,6 @@ fn index_of(vec: &[u8], char: u8) -> Option<usize> {
     found_idx
 }
 
-pub fn parse_log_record(line: &str) -> NginxLogRecord {
-    unsafe {
-        let space_idx = line.find(" ").unwrap();
-        let ip = line.get_unchecked(0..space_idx);
-        let rest = line.get_unchecked(space_idx+1..line.len());
-        
-        let space_idx = rest.find(" ").unwrap();
-        let rest = rest.get_unchecked(space_idx+1..rest.len());
-        let space_idx = rest.find(" ").unwrap();
-        let rest = rest.get_unchecked(space_idx+1..rest.len());
-
-        let brace_idx = rest.find("]").unwrap();
-        let date = rest.get_unchecked(1..brace_idx);
-        let rest = rest.get_unchecked(brace_idx+3..line.len());
-        
-        let quote_idx = rest.find("\"").unwrap();
-        let request = rest.get_unchecked(0..quote_idx);
-        let rest = rest.get_unchecked(quote_idx+2..rest.len());
-
-        let req_space_idx = request.find(" ");
-        let (method, path, query) =
-            if req_space_idx.is_some() {
-                let method = request.get_unchecked(0..req_space_idx.unwrap());
-                let req_rest = request.get_unchecked(req_space_idx.unwrap()+1..request.len());
-                let req_space_idx = req_rest.find(" ");
-                let full_path =
-                    if req_space_idx.is_some() {
-                        req_rest.get_unchecked(0..req_space_idx.unwrap())
-                    } else {
-                        req_rest
-                    };
-                let question_idx = full_path.find("?");
-                let (path, query) =
-                    if question_idx.is_some() {
-                        let pq = full_path.split_at(question_idx.unwrap());
-                        (pq.0, Some(pq.1))
-                    } else {
-                        (full_path, None)
-                    };
-                (Some(method), path, query)
-            } else {
-                (None, request, None)
-            };
-
-        let space_idx = rest.find(" ").unwrap();
-        let status = rest.get_unchecked(0..space_idx);
-        let rest = rest.get_unchecked(space_idx+1..rest.len());
-
-        let space_idx = rest.find(" ").unwrap();
-        let bytes_sent = rest.get_unchecked(0..space_idx);
-        let rest = rest.get_unchecked(space_idx+1..rest.len());
-
-        let space_idx = rest.find(" ").unwrap();
-        let referrer = rest.get_unchecked(1..space_idx-1);
-        let rest = rest.get_unchecked(space_idx+1..rest.len());
-
-        let user_agent = rest.get_unchecked(1..rest.len()-1);
-
-        NginxLogRecord {
-            ip: ip,
-            date: DateTime::parse_from_str(date, "%d/%b/%Y:%H:%M:%S %z").unwrap().with_timezone(&Local),
-            method: method,
-            path: path,
-            query: query,
-            status: if is_empty(status) { None } else { Some(status.parse::<u64>().unwrap()) },
-            bytes: if is_empty(bytes_sent) { None } else { Some(bytes_sent.parse::<u64>().unwrap()) },
-            referrer: if is_empty(referrer) { None } else { Some(referrer) },
-            user_agent: if is_empty(user_agent) { None } else { Some(user_agent) },
-        }
-    }
-}
-
 fn is_empty(value: &str) -> bool {
     value == "-" || value == "\"-\""
 }
@@ -187,19 +115,6 @@ fn empty_opt(bytes: &[u8]) -> Option<&[u8]> {
     } else {
         Some(bytes)
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct NginxLogRecord<'a> {
-    ip: &'a str,
-    date: DateTime<Local>,
-    method: Option<&'a str>,
-    path: &'a str,
-    query: Option<&'a str>,
-    status: Option<u64>,
-    bytes: Option<u64>,
-    referrer: Option<&'a str>,
-    user_agent: Option<&'a str>,
 }
 
 #[derive(Debug, Clone)]
