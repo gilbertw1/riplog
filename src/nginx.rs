@@ -2,7 +2,7 @@ use std::str;
 use std::collections::HashMap;
 
 use chrono::prelude::*;
-use query::{TableDefinition, ColumnDefinition};
+use table::{TableDefinition, ColumnDefinition};
 use byteorder::{BigEndian, ReadBytesExt};
 
 pub fn read_log_record_binary(buf: &Vec<u8>, len: usize, record: &mut BinaryNginxLogRecord) {
@@ -16,6 +16,7 @@ pub fn read_log_record_binary(buf: &Vec<u8>, len: usize, record: &mut BinaryNgin
     let space_idx = index_of(working, b' ').unwrap();
     let working = &working[space_idx+1..working.len()];
     let space_idx = index_of(working, b' ').unwrap();
+    let username = &working[0..space_idx];
     let working = &working[space_idx+1..working.len()];
 
     let brace_idx = index_of(working, b']').unwrap();
@@ -72,6 +73,7 @@ pub fn read_log_record_binary(buf: &Vec<u8>, len: usize, record: &mut BinaryNgin
     let user_agent = &working[1..working.len()-1];
 
     record.ip = ip.to_vec();
+    record.username = or_empty(username.to_vec(), empty);
     record.date = date.to_vec();
     record.method = method.to_vec();
     record.path = path.to_vec();
@@ -82,6 +84,7 @@ pub fn read_log_record_binary(buf: &Vec<u8>, len: usize, record: &mut BinaryNgin
     record.user_agent = user_agent.to_vec();
 
     record.parsed_record.ip = None;
+    record.parsed_record.username = None;
     record.parsed_record.date = None;
     record.parsed_record.method = None;
     record.parsed_record.path = None;
@@ -90,6 +93,14 @@ pub fn read_log_record_binary(buf: &Vec<u8>, len: usize, record: &mut BinaryNgin
     record.parsed_record.bytes = None;
     record.parsed_record.referrer = None;
     record.parsed_record.user_agent = None;
+}
+
+fn or_empty(vec: Vec<u8>, empty: &[u8]) -> Vec<u8> {
+    if vec.len() == 1 && vec[0] == b'-' {
+        empty.to_vec()
+    } else {
+        vec
+    }
 }
 
 fn index_of(vec: &[u8], char: u8) -> Option<usize> {
@@ -120,6 +131,7 @@ fn empty_opt(bytes: &[u8]) -> Option<&[u8]> {
 #[derive(Debug, Clone)]
 pub struct BinaryNginxLogRecord {
     pub ip: Vec<u8>,
+    pub username: Vec<u8>,
     pub date: Vec<u8>,
     pub method: Vec<u8>,
     pub path: Vec<u8>,
@@ -136,6 +148,7 @@ impl BinaryNginxLogRecord {
     pub fn empty() -> BinaryNginxLogRecord {
         BinaryNginxLogRecord {
             ip: Vec::new(),
+            username: Vec::new(),
             date: Vec::new(),
             method: Vec::new(),
             path: Vec::new(),
@@ -155,6 +168,19 @@ impl BinaryNginxLogRecord {
             } else {
                 self.parsed_record.ip = Some(String::from_utf8_unchecked(self.ip.clone()));
                 &self.parsed_record.ip.as_ref().unwrap()
+            }
+        }
+    }
+
+    pub fn parsed_username(&mut self) -> Option<&str> {
+        unsafe {
+            if self.parsed_record.username.is_some() {
+                self.parsed_record.username.as_ref().unwrap().as_ref().map(|s| s.as_str())
+            } else {
+                self.parsed_record.username =
+                    if self.username.len() < 1 { Some(None) }
+                    else { Some(Some(String::from_utf8_unchecked(self.username.clone()))) };
+                self.parsed_record.username.as_ref().unwrap().as_ref().map(|s| s.as_str())
             }
         }
     }
@@ -263,6 +289,7 @@ impl BinaryNginxLogRecord {
 #[derive(Debug, Clone)]
 pub struct ParsedNginxLogRecord {
     ip: Option<String>,
+    username: Option<Option<String>>,
     date: Option<DateTime<Local>>,
     method: Option<Option<String>>,
     path: Option<String>,
@@ -277,6 +304,7 @@ impl ParsedNginxLogRecord {
     pub fn empty() -> ParsedNginxLogRecord {
         ParsedNginxLogRecord {
             ip: None,
+            username: None,
             date: None,
             method: None,
             path: None,
@@ -295,6 +323,10 @@ pub fn create_nginx_log_record_table_definition<'a>() -> TableDefinition<BinaryN
                                      size: 15,
                                      binary_extractor: Box::new(|r: &BinaryNginxLogRecord| empty_opt(&r.ip)),
                                      extractor: Box::new(|r: &mut BinaryNginxLogRecord| Some(r.parsed_ip())) },
+            ColumnDefinition::Text { name: "username",
+                                     size: 5,
+                                     binary_extractor: Box::new(|r: &BinaryNginxLogRecord| empty_opt(&r.username)),
+                                     extractor: Box::new(|r: &mut BinaryNginxLogRecord| r.parsed_username()) },
             ColumnDefinition::Date { name: "date",
                                      size: 26,
                                      binary_extractor: Box::new(|r: &BinaryNginxLogRecord| empty_opt(&r.date)),

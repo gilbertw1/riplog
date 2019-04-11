@@ -3,69 +3,11 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::cmp::Ordering;
 use chrono::prelude::*;
+
 use parser::*;
+use table::{ColumnDefinition,TableDefinition};
 
 const EMPTY_BYTES: &[u8] = &[];
-
-pub struct TableDefinition<T> {
-    pub column_map: HashMap<String, ColumnDefinition<T>>,
-    pub ordered_columns: Vec<String>,
-}
-
-pub enum ColumnDefinition<T> {
-    Integer { name: &'static str,
-              size: usize,
-              binary_extractor: Box<Fn(&T) -> Option<&[u8]>>,
-              extractor: Box<Fn(&mut T) -> Option<u64>> },
-    Double { name: &'static str,
-             size: usize,
-             binary_extractor: Box<Fn(&T) -> Option<&[u8]>>,
-             extractor: Box<Fn(&mut T) -> Option<f64>> },
-    Text { name: &'static str,
-           size: usize,
-           binary_extractor: Box<Fn(&T) -> Option<&[u8]>>,
-           extractor: Box<Fn(&mut T) -> Option<&str>> },
-    Date { name: &'static str,
-           size: usize,
-           binary_extractor: Box<Fn(&T) -> Option<&[u8]>>,
-           extractor: Box<Fn(&mut T) -> Option<&DateTime<Local>>> },
-    Boolean { name: &'static str,
-              size: usize,
-              binary_extractor: Box<Fn(&T) -> Option<&[u8]>>,
-              extractor: Box<Fn(&mut T) -> Option<bool>> }
-}
-
-impl<T> ColumnDefinition<T> {
-    pub fn name(&self) -> &str {
-        match self {
-            ColumnDefinition::Integer { name, .. } => name,
-            ColumnDefinition::Double { name, .. } => name,
-            ColumnDefinition::Text { name, .. } => name,
-            ColumnDefinition::Date { name, .. } => name,
-            ColumnDefinition::Boolean { name, .. } => name,
-        }
-    }
-
-    pub fn extract_binary<'b>(&self, record: &'b T) -> Option<&'b [u8]> {
-        match self {
-            ColumnDefinition::Text { binary_extractor, ..} => binary_extractor(record),
-            ColumnDefinition::Double { binary_extractor, ..} => binary_extractor(record),
-            ColumnDefinition::Integer { binary_extractor, ..} => binary_extractor(record),
-            ColumnDefinition::Boolean { binary_extractor, ..} => binary_extractor(record),
-            ColumnDefinition::Date { binary_extractor, ..} => binary_extractor(record),
-        }
-    }
-
-    pub fn get_size(&self) -> &usize {
-        match self {
-            ColumnDefinition::Text { size, ..} => size,
-            ColumnDefinition::Double { size, ..} => size,
-            ColumnDefinition::Integer { size, ..} => size,
-            ColumnDefinition::Boolean { size, ..} => size,
-            ColumnDefinition::Date { size, ..} => size,
-        }
-    }
-}
 
 pub fn validate_riplog_query<T>(query: &RipLogQuery, definition: &TableDefinition<T>) -> Result<()> {
     if query.filter.is_some() {
@@ -281,9 +223,16 @@ impl<T> QueryEvaluator<T> {
     }
 
     fn evaluate_eq(&mut self, operand1: &QueryValue, operand2: &QueryValue, record: &Record<T>) -> bool {
-        let op1bytes = record.resolve_byte_value(operand1);
-        let op2bytes = record.resolve_byte_value(operand2);
-        op1bytes.is_some() && op2bytes.is_some() && op1bytes.unwrap() == op2bytes.unwrap()
+        match operand2 {
+            QueryValue::Null => {
+                record.resolve_byte_value(operand1).is_none()
+            },
+            _ => {
+                let op1bytes = record.resolve_byte_value(operand1);
+                let op2bytes = record.resolve_byte_value(operand2);
+                op1bytes.is_some() && op2bytes.is_some() && op1bytes.unwrap() == op2bytes.unwrap()
+            }
+        }
     }
 
     fn evaluate_lt(&mut self, operand1: &QueryValue, operand2: &QueryValue, record: &mut Record<T>) -> bool {
@@ -956,15 +905,3 @@ impl<T> OutputField<T> for ReducedOutputField {
         self.size
     }
 }
-
-/*
-ubuntu@api-dev--001 80# cat /var/log/nginx/access.log | grep 1.1.1.1 | awk '{print $9}' | sort | uniq -c | sort -rn
-6672 200
-14 404
-3 400
-1 182
-
-ip = "1.1.1.1" && query ~ "userid1234" | group status | show status, avg(bytes) | sort avg(bytes) | limit 100
-
-
-*/

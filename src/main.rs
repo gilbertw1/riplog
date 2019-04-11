@@ -15,6 +15,7 @@ use flate2::read::GzDecoder;
 mod query;
 mod nginx;
 mod parser;
+mod table;
 
 use nginx::BinaryNginxLogRecord;
 use query::QueryEvaluator;

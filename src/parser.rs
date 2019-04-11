@@ -1,4 +1,4 @@
-use query::TableDefinition;
+use table::TableDefinition;
 
 use nom;
 use nom::types::CompleteStr;
